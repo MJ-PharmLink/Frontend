@@ -1,0 +1,10 @@
+{
+  "description": "Manage customer relationships, inventory, and orders efficiently with role-based access for administrators, sales, and warehouse staff, ensuring streamlined operations.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
