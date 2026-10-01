@@ -8,7 +8,6 @@ import ProductPage from "./pages/ProductPage"
 import InventoryPage from "./pages/InventoryPage"
 import OrderPage from "./pages/OrderPage"
 import MarginPage from "./pages/MarginPage"
-import React from 'react'
 
 export type UserRole = "admin" | "sales" | "warehouse"
 

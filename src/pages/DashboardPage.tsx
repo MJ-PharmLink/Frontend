@@ -1,4 +1,3 @@
-import React from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts"
 import type { AuthUser, AdminRoute } from "../App"
 
@@ -114,8 +113,8 @@ export default function DashboardPage({ user, onNavigate }: Props) {
               <XAxis dataKey="month" tick={{ fontSize: 12, fill: "#999" }} axisLine={false} tickLine={false} />
               <YAxis tickFormatter={(v) => fmt(v)} tick={{ fontSize: 11, fill: "#999" }} axisLine={false} tickLine={false} />
               <Tooltip
-                formatter={(value: number, name: string) => [
-                  `₩ ${value.toLocaleString()}`,
+                formatter={(value, name) => [
+                  `₩ ${Number(value ?? 0).toLocaleString()}`,
                   name === "sales" ? "매출" : name === "margin" ? "마진" : "매입",
                 ]}
                 contentStyle={{ fontSize: 12, borderRadius: 6, border: "1px solid #E5EAF0" }}

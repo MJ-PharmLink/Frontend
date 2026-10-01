@@ -1,4 +1,3 @@
-import React from 'react';
 import { useState } from "react"
 import { PRODUCTS, CATEGORIES, CATEGORY_COLORS } from "../data/products"
 

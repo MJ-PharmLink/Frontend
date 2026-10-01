@@ -1,5 +1,4 @@
 import { ReactNode, useState } from "react"
-import React from 'react';
 import type { AuthUser, AdminRoute } from "../App"
 
 interface NavItem {

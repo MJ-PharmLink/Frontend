@@ -1,4 +1,3 @@
-import React from 'react';
 import { useState } from "react"
 import { PRODUCTS, CATEGORIES } from "../data/products"
 import type { AuthUser } from "../App"
