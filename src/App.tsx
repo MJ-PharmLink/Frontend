@@ -1,4 +1,5 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import { authApi, logout, setSessionExpiredHandler, tokenStore } from "./api"
 import HomePage from "./pages/HomePage"
 import LoginPage from "./pages/LoginPage"
 import AdminLayout from "./components/AdminLayout"
@@ -39,12 +40,34 @@ export default function App() {
   const [route, setRoute] = useState<AppRoute>("home")
   const [user, setUser] = useState<AuthUser | null>(null)
 
+  // 토큰이 남아 있으면 3.4 내 정보 조회로 로그인 상태를 되살린다 (새로고침 대응)
+  useEffect(() => {
+    if (!tokenStore.getAccessToken()) return
+    authApi
+        .me()
+        .then(({ user_id, username, name, role }) => {
+          setUser({ user_id, username, name, role })
+          setRoute("dashboard")
+        })
+        .catch(() => tokenStore.clear())
+  }, [])
+
+  // refresh token까지 만료되면 client.ts가 토큰을 지우고 이 핸들러를 부른다
+  useEffect(() => {
+    setSessionExpiredHandler(() => {
+      setUser(null)
+      setRoute("login")
+    })
+  }, [])
+
   const handleLogin = (u: AuthUser) => {
     setUser(u)
     setRoute("dashboard")
   }
 
+  // 3.3 로그아웃 — 서버의 refresh token을 폐기한다. 실패해도 client.ts가 토큰은 지운다
   const handleLogout = () => {
+    logout().catch(() => {})
     setUser(null)
     setRoute("home")
   }

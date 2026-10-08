@@ -1,6 +1,8 @@
 export {
   API_BASE_URL,
   ApiError,
+  errorMessage,
+  fetchAllPages,
   login,
   logout,
   setSessionExpiredHandler,

@@ -1,5 +1,5 @@
-import { useState } from "react"
-import { PARTNERS, partnerTransactions } from "../data/sample"
+import { useEffect, useState } from "react"
+import { errorMessage, fetchAllPages, partnersApi } from "../api"
 import {
   ORDER_STATUS_LABELS,
   ORDER_STATUS_TONES,
@@ -10,7 +10,7 @@ import {
   formatMoney,
 } from "../lib/domain"
 import { PARTNER_TYPES } from "../types/api"
-import type { BusinessPartner, PartnerType } from "../types/api"
+import type { BusinessPartner, PartnerTransaction, PartnerType } from "../types/api"
 
 /** 거래 이력 행 배지 색 */
 const TRANSACTION_TONES = {
@@ -68,7 +68,27 @@ const EMPTY_FORM = {
  * 고객사는 주문·매출, 공급처는 매입만 발생한다. 취소된 주문도 포함된다.
  */
 function PartnerTransactions({ partnerId }: { partnerId: number }) {
-  const rows = partnerTransactions(partnerId)
+  const [rows, setRows] = useState<PartnerTransaction[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setLoading(true)
+    setError(null)
+    fetchAllPages((page, page_size) => partnersApi.transactions(partnerId, { page, page_size }))
+        .then(setRows)
+        .catch((err) => setError(errorMessage(err, "거래 이력을 불러오지 못했습니다.")))
+        .finally(() => setLoading(false))
+  }, [partnerId])
+
+  if (loading) return <p className="py-12 text-center text-sm" style={{ color: "#999" }}>불러오는 중...</p>
+  if (error) {
+    return (
+        <p className="px-4 py-2.5 text-sm" style={{ background: "#FEF2F2", color: "#DC2626", borderRadius: 6 }}>
+          {error}
+        </p>
+    )
+  }
 
   // 누적 거래액은 거래처 필드가 아니라 이 이력에서 집계한다
   const totals = rows.reduce(
@@ -141,7 +161,11 @@ function PartnerTransactions({ partnerId }: { partnerId: number }) {
 }
 
 export default function PartnerPage() {
-  const [partners, setPartners] = useState<BusinessPartner[]>(PARTNERS)
+  const [partners, setPartners] = useState<BusinessPartner[]>([])
+  const [loading, setLoading] = useState(true)
+  const [pageError, setPageError] = useState<string | null>(null)
+  const [formError, setFormError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
   const [tab, setTab] = useState<TabKey>("all")
   const [sort, setSort] = useState<SortKey>("default")
   const [sortMenu, setSortMenu] = useState<TabKey | null>(null)
@@ -152,6 +176,17 @@ export default function PartnerPage() {
   const [modalTab, setModalTab] = useState<"info" | "transactions">("info")
   const [form, setForm] = useState(EMPTY_FORM)
   const [verificationStatus, setVerificationStatus] = useState<"idle" | "success" | "error">("idle")
+
+  // 5.1 목록 — 비활성 거래처도 함께 받아 탭·검색·정렬은 화면에서 한다
+  useEffect(() => {
+    fetchAllPages((page, page_size) => partnersApi.list({ page, page_size, include_inactive: true }))
+        .then(setPartners)
+        .catch((err) => setPageError(errorMessage(err, "거래처 목록을 불러오지 못했습니다.")))
+        .finally(() => setLoading(false))
+  }, [])
+
+  const replacePartner = (updated: BusinessPartner) =>
+      setPartners((prev) => prev.map((p) => (p.partner_id === updated.partner_id ? updated : p)))
 
   // 5.1 keyword 는 거래처명 또는 사업자등록번호를 검색한다
   const filtered = partners.filter((p) => {
@@ -195,6 +230,7 @@ export default function PartnerPage() {
     )
     setVerificationStatus("idle")
     setConfirmDelete(false)
+    setFormError(null)
     setModalTab("info")
     setShowModal(true)
   }
@@ -212,49 +248,53 @@ export default function PartnerPage() {
     setVerificationStatus(isValid ? "success" : "error")
   }
 
-  const handleSave = () => {
-    if (selected) {
-      // 5.4 수정은 전체 교체(PUT). partner_type은 변경되지 않는다
-      setPartners((prev) =>
-        prev.map((p) =>
-          p.partner_id === selected.partner_id
-            ? {
-                ...p,
-                name: form.name,
-                business_number: form.business_number,
-                phone: form.phone,
-                address: form.address,
-                manager_name: form.manager_name || null,
-              }
-            : p,
-        ),
-      )
-    } else {
-      setPartners((prev) => [
-        ...prev,
-        {
-          partner_id: Math.max(0, ...prev.map((p) => p.partner_id)) + 1,
-          partner_type: form.partner_type,
-          name: form.name,
-          business_number: form.business_number,
-          phone: form.phone,
-          address: form.address,
-          manager_name: form.manager_name || null,
-          is_active: true,
-        },
-      ])
+  const handleSave = async () => {
+    setFormError(null)
+    setSaving(true)
+    const body = {
+      name: form.name,
+      business_number: form.business_number,
+      phone: form.phone,
+      address: form.address,
+      // 담당자는 선택 항목이라 비워 두면 보내지 않는다(null 저장)
+      manager_name: form.manager_name.trim() || undefined,
     }
-    closeModal()
+    try {
+      if (selected) {
+        // 5.4 수정은 전체 교체(PUT). partner_type은 변경되지 않는다
+        replacePartner(await partnersApi.update(selected.partner_id, body))
+      } else {
+        // 5.2 등록
+        const created = await partnersApi.create({ ...body, partner_type: form.partner_type })
+        setPartners((prev) => [...prev, created])
+      }
+      closeModal()
+    } catch (err) {
+      setFormError(errorMessage(err))
+    } finally {
+      setSaving(false)
+    }
   }
 
-  /** 5.5 삭제는 물리 삭제가 아니라 is_active = false 로 비활성화한다 */
-  const handleDelete = () => {
+  /**
+   * 5.5 삭제는 물리 삭제가 아니라 is_active = false 로 비활성화한다.
+   * 진행 중인 주문·납품이 있으면 서버가 409 PARTNER_IN_USE 로 거절한다.
+   */
+  const handleDelete = async () => {
     if (!selected) return
-    setPartners((prev) =>
-      prev.map((p) => (p.partner_id === selected.partner_id ? { ...p, is_active: false } : p)),
-    )
-    setSelected(null)
-    closeModal()
+    setFormError(null)
+    setSaving(true)
+    try {
+      await partnersApi.deactivate(selected.partner_id)
+      replacePartner({ ...selected, is_active: false })
+      setSelected(null)
+      closeModal()
+    } catch (err) {
+      setConfirmDelete(false)
+      setFormError(errorMessage(err))
+    } finally {
+      setSaving(false)
+    }
   }
 
   const inputStyle = { border: "1px solid #E5EAF0", borderRadius: 6, color: "#333" } as const
@@ -279,6 +319,12 @@ export default function PartnerPage() {
             거래처 등록
           </button>
         </div>
+
+        {pageError && (
+            <p className="px-4 py-2.5 text-sm" style={{ background: "#FEF2F2", color: "#DC2626", borderRadius: 6 }}>
+              {pageError}
+            </p>
+        )}
 
         {/* 탭을 누르면 정렬 기준 메뉴가 열린다 */}
         <div className="flex items-center justify-between flex-wrap gap-4">
@@ -423,7 +469,7 @@ export default function PartnerPage() {
           </div>
           {sorted.length === 0 && (
               <div className="py-14 text-center text-sm" style={{ color: "#999" }}>
-                조건에 맞는 거래처가 없습니다.
+                {loading ? "불러오는 중..." : "조건에 맞는 거래처가 없습니다."}
               </div>
           )}
         </div>
@@ -582,6 +628,12 @@ export default function PartnerPage() {
                   </div>
                 </div>
 
+                {formError && !(selected && modalTab === "transactions") && (
+                    <p className="mt-5 px-4 py-2.5 text-sm" style={{ background: "#FEF2F2", color: "#DC2626", borderRadius: 6 }}>
+                      {formError}
+                    </p>
+                )}
+
                 {selected && modalTab === "transactions" ? (
                     <div className="flex justify-end mt-7">
                       <button onClick={closeModal} className="px-5 py-2 text-sm font-medium" style={{ border: "1px solid #E5EAF0", borderRadius: 7, color: "#666" }}>
@@ -606,6 +658,7 @@ export default function PartnerPage() {
                         </button>
                         <button
                             onClick={handleDelete}
+                            disabled={saving}
                             className="px-3 py-1.5 text-sm font-medium"
                             style={{ background: "#DC2626", color: "white", borderRadius: 6 }}
                         >
@@ -634,8 +687,8 @@ export default function PartnerPage() {
                         <button onClick={closeModal} className="px-5 py-2 text-sm font-medium" style={{ border: "1px solid #E5EAF0", borderRadius: 7, color: "#666" }}>
                           취소
                         </button>
-                        <button onClick={handleSave} className="px-5 py-2 text-sm font-medium" style={{ background: "#0B3D91", color: "white", borderRadius: 7 }}>
-                          저장
+                        <button onClick={handleSave} disabled={saving} className="px-5 py-2 text-sm font-medium" style={{ background: saving ? "#7A9CD6" : "#0B3D91", color: "white", borderRadius: 7 }}>
+                          {saving ? "저장 중..." : "저장"}
                         </button>
                       </div>
                     </div>

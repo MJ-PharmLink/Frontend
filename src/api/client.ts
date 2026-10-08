@@ -239,6 +239,30 @@ export async function requestPage<T>(
   }
 }
 
+/**
+ * 목록 API를 마지막 페이지까지 모두 받아 한 배열로 합친다.
+ * 화면이 클라이언트 필터링을 하는 동안 서버 page_size 최대값(100)으로 나눠 받는다.
+ */
+export async function fetchAllPages<T>(fetchPage: (page: number, pageSize: number) => Promise<Page<T>>): Promise<T[]> {
+  const pageSize = 100
+  const first = await fetchPage(1, pageSize)
+  const rows = [...first.data]
+  for (let page = 2; page <= first.pagination.total_pages; page++) {
+    rows.push(...(await fetchPage(page, pageSize)).data)
+  }
+  return rows
+}
+
+/** 화면에 보여 줄 오류 문구. VALIDATION_ERROR면 어떤 필드가 문제인지 덧붙인다 */
+export function errorMessage(err: unknown, fallback = "요청 처리 중 오류가 발생했습니다."): string {
+  if (!(err instanceof ApiError)) return fallback
+  if (err.code !== "VALIDATION_ERROR") return err.message
+  const issues = err.details
+    .map((d) => (d.field && d.issue ? `${d.field}: ${d.issue}` : d.issue))
+    .filter(Boolean)
+  return issues.length > 0 ? `${err.message} (${issues.join(", ")})` : err.message
+}
+
 /** 204 No Content 응답 */
 export async function requestEmpty(path: string, options: RequestOptions = {}): Promise<void> {
   const response = await send(path, options)

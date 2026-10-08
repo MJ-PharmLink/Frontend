@@ -1,6 +1,6 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import type { AuthUser } from "../App"
-import { COMPANY } from "../data/sample"
+import { companyApi, errorMessage } from "../api"
 import { formatDateTime } from "../lib/domain"
 import type { Company } from "../types/api"
 
@@ -43,11 +43,31 @@ const FIELDS: { key: FieldKey; label: string; required: boolean; placeholder: st
   { key: "email", label: "대표 이메일", required: false, placeholder: "contact@pharmlink.co.kr" },
 ]
 
+const EMPTY_FORM: Record<FieldKey, string> = {
+  name: "",
+  business_number: "",
+  representative_name: "",
+  wholesale_license_number: "",
+  address: "",
+  phone: "",
+  fax: "",
+  email: "",
+}
+
 export default function CompanyPage({ user }: Props) {
-  const [company, setCompany] = useState<Company>(COMPANY)
+  const [company, setCompany] = useState<Company | null>(null)
   const [editing, setEditing] = useState(false)
-  const [form, setForm] = useState<Record<FieldKey, string>>(() => toForm(COMPANY))
+  const [form, setForm] = useState<Record<FieldKey, string>>(EMPTY_FORM)
   const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  // 13.1 회사 정보 조회
+  useEffect(() => {
+    companyApi
+        .get()
+        .then(setCompany)
+        .catch((err) => setError(errorMessage(err, "회사 정보를 불러오지 못했습니다.")))
+  }, [])
 
   // 13.2 수정은 관리자만 가능하다
   const canEdit = user.role === "ADMIN"
@@ -66,6 +86,7 @@ export default function CompanyPage({ user }: Props) {
   }
 
   const startEdit = () => {
+    if (!company) return
     setForm(toForm(company))
     setError(null)
     setEditing(true)
@@ -74,7 +95,7 @@ export default function CompanyPage({ user }: Props) {
   const update = (key: FieldKey, value: string) =>
     setForm((prev) => ({ ...prev, [key]: key === "business_number" ? formatBusinessNumber(value) : value }))
 
-  const save = () => {
+  const save = async () => {
     const missing = FIELDS.filter((f) => f.required && form[f.key].trim() === "")
     if (missing.length > 0) {
       return setError(`${missing.map((f) => f.label).join(", ")}은(는) 필수입니다.`)
@@ -86,25 +107,31 @@ export default function CompanyPage({ user }: Props) {
       return setError("대표 이메일 형식이 올바르지 않습니다.")
     }
 
-    // 전체 교체(PUT). 빈 값으로 보낸 선택 항목은 null이 된다
-    setCompany((prev) => ({
-      ...prev,
-      name: form.name.trim(),
-      business_number: form.business_number,
-      representative_name: form.representative_name.trim(),
-      wholesale_license_number: form.wholesale_license_number.trim() || null,
-      address: form.address.trim(),
-      phone: form.phone.trim(),
-      fax: form.fax.trim() || null,
-      email: form.email.trim() || null,
-      updated_at: new Date().toISOString(),
-    }))
-    setEditing(false)
-    setError(null)
+    // 13.2 전체 교체(PUT). 빈 값으로 보낸 선택 항목은 서버가 null로 저장한다
+    setSaving(true)
+    try {
+      const updated = await companyApi.update({
+        name: form.name.trim(),
+        business_number: form.business_number,
+        representative_name: form.representative_name.trim(),
+        wholesale_license_number: form.wholesale_license_number.trim(),
+        address: form.address.trim(),
+        phone: form.phone.trim(),
+        fax: form.fax.trim(),
+        email: form.email.trim(),
+      })
+      setCompany(updated)
+      setEditing(false)
+      setError(null)
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setSaving(false)
+    }
   }
 
   const displayValue = (key: FieldKey) => {
-    const value = company[key]
+    const value = company?.[key] ?? null
     return value === null || value === "" ? "-" : value
   }
 
@@ -117,7 +144,7 @@ export default function CompanyPage({ user }: Props) {
               납품서 공급자 영역과 화면 상단 회사명에 사용됩니다
             </p>
           </div>
-          {canEdit && !editing && (
+          {canEdit && !editing && company && (
               <button
                   onClick={startEdit}
                   className="px-4 py-2 text-sm font-medium"
@@ -143,10 +170,10 @@ export default function CompanyPage({ user }: Props) {
         <div className="bg-white" style={{ borderRadius: 8, border: "1px solid #E5EAF0" }}>
           <div className="px-6 py-5" style={{ borderBottom: "1px solid #F0F0F0" }}>
             <p className="font-semibold text-sm" style={{ color: "#1a1a1a" }}>
-              {editing ? "회사 정보 수정" : company.name}
+              {editing ? "회사 정보 수정" : company?.name ?? "불러오는 중..."}
             </p>
             <p className="text-xs mt-1" style={{ color: "#999" }}>
-              최종 수정 {formatDateTime(company.updated_at)}
+              최종 수정 {formatDateTime(company?.updated_at)}
             </p>
           </div>
 
@@ -199,10 +226,11 @@ export default function CompanyPage({ user }: Props) {
                 </button>
                 <button
                     onClick={save}
+                    disabled={saving}
                     className="px-5 py-2 text-sm font-medium"
-                    style={{ background: "#0B3D91", color: "white", borderRadius: 7 }}
+                    style={{ background: saving ? "#7A9CD6" : "#0B3D91", color: "white", borderRadius: 7 }}
                 >
-                  저장
+                  {saving ? "저장 중..." : "저장"}
                 </button>
               </div>
           )}

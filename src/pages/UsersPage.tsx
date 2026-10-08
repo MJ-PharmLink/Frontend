@@ -1,23 +1,13 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import { errorMessage, fetchAllPages, usersApi } from "../api"
 import { ROLE_LABELS, ROLE_TONES, formatDate } from "../lib/domain"
 import { USER_ROLES } from "../types/api"
-import type { User, UserRole } from "../types/api"
+import type { UpdateUserRequest, User, UserRole } from "../types/api"
 
 /**
  * 4. 사용자(계정) 관리 — 관리자 전용.
  * 명세의 users 리소스에는 이메일이 없다. 식별자는 username 이다.
  */
-
-const INITIAL_USERS: User[] = [
-    { user_id: 1, username: "admin01", name: "김관리자", role: "ADMIN", is_active: true, created_at: "2026-01-05T00:00:00Z" },
-    { user_id: 2, username: "sales01", name: "이영업", role: "SALES", is_active: true, created_at: "2026-01-10T00:00:00Z" },
-    { user_id: 3, username: "wh01", name: "박창고", role: "WAREHOUSE", is_active: true, created_at: "2026-01-10T00:00:00Z" },
-    { user_id: 4, username: "sales02", name: "최담당", role: "SALES", is_active: true, created_at: "2026-02-01T00:00:00Z" },
-    { user_id: 5, username: "wh02", name: "정창고", role: "WAREHOUSE", is_active: false, created_at: "2026-02-15T00:00:00Z" },
-    { user_id: 6, username: "sales03", name: "강영업", role: "SALES", is_active: true, created_at: "2026-03-01T00:00:00Z" },
-    { user_id: 7, username: "admin02", name: "오관리", role: "ADMIN", is_active: false, created_at: "2026-03-20T00:00:00Z" },
-    { user_id: 8, username: "wh03", name: "한담당", role: "WAREHOUSE", is_active: true, created_at: "2026-04-01T00:00:00Z" },
-]
 
 const EMPTY_FORM = { username: "", name: "", role: "SALES" as UserRole, password: "" }
 
@@ -33,7 +23,11 @@ const ROLE_FILTERS = ["전체", ...USER_ROLES] as const
 type RoleFilter = (typeof ROLE_FILTERS)[number]
 
 export default function UsersPage() {
-    const [users, setUsers] = useState<User[]>(INITIAL_USERS)
+    const [users, setUsers] = useState<User[]>([])
+    const [loading, setLoading] = useState(true)
+    const [pageError, setPageError] = useState<string | null>(null)
+    const [formError, setFormError] = useState<string | null>(null)
+    const [saving, setSaving] = useState(false)
     const [roleFilter, setRoleFilter] = useState<RoleFilter>("전체")
     const [sort, setSort] = useState<SortKey>("default")
     const [sortMenu, setSortMenu] = useState<RoleFilter | null>(null)
@@ -41,6 +35,17 @@ export default function UsersPage() {
     const [showModal, setShowModal] = useState(false)
     const [editUser, setEditUser] = useState<User | null>(null)
     const [form, setForm] = useState(EMPTY_FORM)
+
+    // 4.1 목록 — 비활성 계정도 함께 보여 주고 필터·정렬은 화면에서 한다
+    useEffect(() => {
+        fetchAllPages((page, page_size) => usersApi.list({ page, page_size, include_inactive: true }))
+            .then(setUsers)
+            .catch((err) => setPageError(errorMessage(err, "사용자 목록을 불러오지 못했습니다.")))
+            .finally(() => setLoading(false))
+    }, [])
+
+    const replaceUser = (updated: User) =>
+        setUsers((prev) => prev.map((u) => (u.user_id === updated.user_id ? { ...u, ...updated } : u)))
 
     const filtered = users.filter((u) => {
         const matchRole = roleFilter === "전체" || u.role === roleFilter
@@ -62,6 +67,7 @@ export default function UsersPage() {
     const openCreate = () => {
         setEditUser(null)
         setForm(EMPTY_FORM)
+        setFormError(null)
         setShowModal(true)
     }
 
@@ -69,35 +75,55 @@ export default function UsersPage() {
         setEditUser(u)
         // 4.3 수정에서는 username을 바꿀 수 없다. 비밀번호는 재설정할 때만 보낸다
         setForm({ username: u.username, name: u.name, role: u.role, password: "" })
+        setFormError(null)
         setShowModal(true)
     }
 
-    const handleSave = () => {
-        if (editUser) {
-            setUsers((prev) =>
-                prev.map((u) =>
-                    u.user_id === editUser.user_id ? { ...u, name: form.name, role: form.role } : u,
-                ),
-            )
-        } else {
-            const newUser: User = {
-                user_id: Math.max(0, ...users.map((u) => u.user_id)) + 1,
-                username: form.username,
-                name: form.name,
-                role: form.role,
-                is_active: true,
-                created_at: new Date().toISOString(),
+    const handleSave = async () => {
+        setFormError(null)
+        setSaving(true)
+        try {
+            if (editUser) {
+                // 4.3 보낸 필드만 수정된다. 역할·비밀번호가 바뀌면 서버가 그 사용자의 refresh token을 폐기한다
+                const body: UpdateUserRequest = {}
+                if (form.name !== editUser.name) body.name = form.name
+                if (form.role !== editUser.role) body.role = form.role
+                if (form.password !== "") body.password = form.password
+                if (Object.keys(body).length > 0) replaceUser(await usersApi.update(editUser.user_id, body))
+            } else {
+                // 4.2 계정 생성
+                const created = await usersApi.create({
+                    username: form.username,
+                    password: form.password,
+                    name: form.name,
+                    role: form.role,
+                })
+                setUsers((prev) => [...prev, created])
             }
-            setUsers((prev) => [...prev, newUser])
+            setShowModal(false)
+        } catch (err) {
+            setFormError(errorMessage(err))
+        } finally {
+            setSaving(false)
         }
-        setShowModal(false)
     }
 
-    /** 4.4 삭제는 소프트 삭제(is_active=false)이고, 4.3으로 다시 활성화한다 */
-    const toggleActive = (userId: number) => {
-        setUsers((prev) =>
-            prev.map((u) => (u.user_id === userId ? { ...u, is_active: !u.is_active } : u)),
-        )
+    /**
+     * 4.4 삭제는 소프트 삭제(is_active=false)이고, 4.3으로 다시 활성화한다.
+     * 관리자 본인은 비활성화할 수 없다(422).
+     */
+    const toggleActive = async (u: User) => {
+        setPageError(null)
+        try {
+            if (u.is_active) {
+                await usersApi.deactivate(u.user_id)
+                replaceUser({ ...u, is_active: false })
+            } else {
+                replaceUser(await usersApi.update(u.user_id, { is_active: true }))
+            }
+        } catch (err) {
+            setPageError(errorMessage(err))
+        }
     }
 
     const stats = {
@@ -126,6 +152,12 @@ export default function UsersPage() {
                     계정 생성
                 </button>
             </div>
+
+            {pageError && (
+                <p className="px-4 py-2.5 text-sm" style={{ background: "#FEF2F2", color: "#DC2626", borderRadius: 6 }}>
+                    {pageError}
+                </p>
+            )}
 
             {/* KPI cards */}
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
@@ -284,7 +316,7 @@ export default function UsersPage() {
                                         <div className="flex gap-3">
                                             <button onClick={() => openEdit(u)} className="text-xs font-medium" style={{ color: "#0B3D91" }}>수정</button>
                                             <button
-                                                onClick={() => toggleActive(u.user_id)}
+                                                onClick={() => toggleActive(u)}
                                                 className="text-xs font-medium"
                                                 style={{ color: u.is_active ? "#DC2626" : "#059669" }}
                                             >
@@ -300,7 +332,7 @@ export default function UsersPage() {
                 </div>
                 {sorted.length === 0 && (
                     <div className="py-14 text-center text-sm" style={{ color: "#999" }}>
-                        조건에 맞는 계정이 없습니다.
+                        {loading ? "불러오는 중..." : "조건에 맞는 계정이 없습니다."}
                     </div>
                 )}
             </div>
@@ -383,9 +415,16 @@ export default function UsersPage() {
                                 </select>
                             </div>
                         </div>
+                        {formError && (
+                            <p className="mt-5 px-4 py-2.5 text-sm" style={{ background: "#FEF2F2", color: "#DC2626", borderRadius: 6 }}>
+                                {formError}
+                            </p>
+                        )}
                         <div className="flex gap-3 mt-6 justify-end">
                             <button onClick={() => setShowModal(false)} className="px-5 py-2 text-sm font-medium" style={{ border: "1px solid #E5EAF0", borderRadius: 7, color: "#666" }}>취소</button>
-                            <button onClick={handleSave} className="px-5 py-2 text-sm font-medium" style={{ background: "#0B3D91", color: "white", borderRadius: 7 }}>저장</button>
+                            <button onClick={handleSave} disabled={saving} className="px-5 py-2 text-sm font-medium" style={{ background: saving ? "#7A9CD6" : "#0B3D91", color: "white", borderRadius: 7 }}>
+                                {saving ? "저장 중..." : "저장"}
+                            </button>
                         </div>
                     </div>
                 </div>
