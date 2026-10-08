@@ -51,8 +51,8 @@ export default function OrderPage({ user }: Props) {
   const [showModal, setShowModal] = useState(false)
   const [selected, setSelected] = useState<Order | null>(null)
 
-  const canRegister = user.role === "admin" || user.role === "sales"
-  const canApprove  = user.role === "admin" || user.role === "warehouse"
+  const canRegister = user.role === "ADMIN" || user.role === "SALES"
+  const canApprove  = user.role === "ADMIN" || user.role === "SALES"
 
   const filtered = orders.filter((o) => filterStatus === "전체" || o.status === filterStatus)
 

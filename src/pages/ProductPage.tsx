@@ -1,181 +1,62 @@
 import { useState } from "react"
+import { CATEGORY_COLORS } from "../data/products"
+import { ITEM_UNITS, formatMoney, formatNumber, itemCodePrefix } from "../lib/domain"
+import type { Category, Item } from "../types/api"
 
-export interface ProductMaster {
-  code: string
-  name: string
-  category: string
-  indication: string
-  spec: string
-  unit: string
-  costPrice: number
-  salePrice: number
-  stock: number
-  safetyStock: number
-  manufacturer: string
-  drugType: "전문의약품" | "일반의약품" | "건강기능식품"
-  status: "정상" | "단종"
-}
+/**
+ * 6. 상품(의약품) 마스터.
+ *
+ * 수량(재고)은 items가 아니라 inventories에 있으므로 이 화면에서는 다루지 않는다.
+ * 상품을 등록하면 서버가 기본 창고에 수량 0인 재고 레코드를 함께 만든다(6.3).
+ */
 
-export const CATEGORIES = [
-  "감염성질환 및 호흡기계",
-  "소화기계 및 순환기계",
-  "신경계 및 정신/행동장애",
-  "호르몬 및 대사성 의약품",
-  "기타",
+/** 6.5 카테고리 — DB 설계서 9. 초기 데이터(KPIC 약효 분류 5종) */
+const CATEGORIES: Category[] = [
+  { category_id: 1, category_name: "감염성질환 및 호흡기계", description: "감기, 알레르기, 객담, 코막힘, 인후염 등", created_at: "2026-09-01T09:00:00Z" },
+  { category_id: 2, category_name: "소화기계 및 순환기계", description: "소화불량, 위산과다, 설사, 변비, 치질 등", created_at: "2026-09-01T09:00:00Z" },
+  { category_id: 3, category_name: "신경계 및 정신/행동장애", description: "해열, 진통, 두통, 생리통 등", created_at: "2026-09-01T09:00:00Z" },
+  { category_id: 4, category_name: "호르몬 및 대사성 의약품", description: "당뇨, 갑상선, 호르몬 조절 등", created_at: "2026-09-01T09:00:00Z" },
+  { category_id: 5, category_name: "기타", description: "외용제, 의약외품 등", created_at: "2026-09-01T09:00:00Z" },
 ]
 
-export const CATEGORY_COLORS: Record<string, { bg: string; text: string }> = {
-  "감염성질환 및 호흡기계": { bg: "#EFF6FF", text: "#1D4ED8" },
-  "소화기계 및 순환기계": { bg: "#ECFDF5", text: "#047857" },
-  "신경계 및 정신/행동장애": { bg: "#FFF7ED", text: "#C2410C" },
-  "호르몬 및 대사성 의약품": { bg: "#F3E8FF", text: "#6B21A8" },
-  기타: { bg: "#F3F4F6", text: "#374151" },
-}
-
-export const PRODUCTS: ProductMaster[] = [
-  {
-    code: "INF-001",
-    name: "아목시실린 캡슐 500mg",
-    category: "감염성질환 및 호흡기계",
-    indication: "세균성 감염증(인후염, 중이염)",
-    spec: "100캡슐/병",
-    unit: "병",
-    costPrice: 8500,
-    salePrice: 13500,
-    stock: 450,
-    safetyStock: 100,
-    manufacturer: "한미약품",
-    drugType: "전문의약품",
-    status: "정상",
-  },
-  {
-    code: "INF-002",
-    name: "세프라딘 정 500mg",
-    category: "감염성질환 및 호흡기계",
-    indication: "호흡기 감염, 피부감염",
-    spec: "100정/PTP",
-    unit: "상자",
-    costPrice: 12000,
-    salePrice: 18000,
-    stock: 80,
-    safetyStock: 100,
-    manufacturer: "종근당",
-    drugType: "전문의약품",
-    status: "정상",
-  },
-  {
-    code: "DIG-001",
-    name: "아제스틴 정",
-    category: "소화기계 및 순환기계",
-    indication: "소화불량, 위산과다",
-    spec: "500정/병",
-    unit: "병",
-    costPrice: 15000,
-    salePrice: 22000,
-    stock: 320,
-    safetyStock: 80,
-    manufacturer: "대웅제약",
-    drugType: "일반의약품",
-    status: "정상",
-  },
-  {
-    code: "DIG-002",
-    name: "암로디핀 베실산염 5mg",
-    category: "소화기계 및 순환기계",
-    indication: "고혈압, 협심증",
-    spec: "30정/PTP",
-    unit: "상자",
-    costPrice: 4200,
-    salePrice: 6800,
-    stock: 600,
-    safetyStock: 150,
-    manufacturer: "유한양행",
-    drugType: "전문의약품",
-    status: "정상",
-  },
-  {
-    code: "NEU-001",
-    name: "뉴로펜 서방정 300mg",
-    category: "신경계 및 정신/행동장애",
-    indication: "신경통, 중추성 통증",
-    spec: "100정/병",
-    unit: "병",
-    costPrice: 18000,
-    salePrice: 27000,
-    stock: 45,
-    safetyStock: 50,
-    manufacturer: "GC녹십자",
-    drugType: "전문의약품",
-    status: "정상",
-  },
-  {
-    code: "MET-001",
-    name: "메트포르민 염산염 500mg",
-    category: "호르몬 및 대사성 의약품",
-    indication: "제2형 당뇨병",
-    spec: "100정/PTP",
-    unit: "상자",
-    costPrice: 3500,
-    salePrice: 5500,
-    stock: 800,
-    safetyStock: 200,
-    manufacturer: "JW중외제약",
-    drugType: "전문의약품",
-    status: "정상",
-  },
-  {
-    code: "ETC-005",
-    name: "쿨렉스파스",
-    category: "기타",
-    indication: "근육통·관절통·묨",
-    spec: "6매/봉",
-    unit: "박스",
-    costPrice: 2400,
-    salePrice: 4200,
-    stock: 280,
-    safetyStock: 100,
-    manufacturer: "그린셀제약",
-    drugType: "일반의약품",
-    status: "정상",
-  },
+/** 공급처 — 5.1 거래처 목록에서 partner_type=SUPPLIER 로 조회한 결과에 해당 */
+const SUPPLIERS = [
+  { supplier_id: 13, supplier_name: "아진바이오" },
+  { supplier_id: 14, supplier_name: "메디코어제약" },
+  { supplier_id: 15, supplier_name: "세움파마" },
+  { supplier_id: 16, supplier_name: "한결제약" },
+  { supplier_id: 17, supplier_name: "이노젠파마" },
+  { supplier_id: 19, supplier_name: "그린셀제약" },
+  { supplier_id: 21, supplier_name: "유니랩제약" },
 ]
 
-const CATEGORY_CODE_PREFIX: Record<string, string> = {
-  "감염성질환 및 호흡기계": "INF",
-  "소화기계 및 순환기계": "DIG",
-  "신경계 및 정신/행동장애": "NEU",
-  "호르몬 및 대사성 의약품": "HOR",
-  기타: "ETC",
-}
-
-const UNITS = ["박스", "개"] as const
-type Unit = (typeof UNITS)[number]
-
-const DRUG_TYPES: ProductMaster["drugType"][] = ["전문의약품", "일반의약품", "건강기능식품"]
-
-const MANUFACTURERS = Array.from(new Set(PRODUCTS.map((p) => p.manufacturer))).sort((a, b) =>
-    a.localeCompare(b, "ko"),
-)
-
-const EMPTY_FORM = {
-  name: "",
-  category: CATEGORIES[0],
-  codeNumber: "001",
-  manufacturer: MANUFACTURERS[0],
-  indication: "",
-  spec: "",
-  unitQty: 1,
-  unit: "박스" as Unit,
-  drugType: "전문의약품" as ProductMaster["drugType"],
-  costPrice: 0,
-  salePrice: 0,
-  stock: 0,
-  safetyStock: 0,
-}
-
-type ProductForm = typeof EMPTY_FORM
+const ITEMS: Item[] = [
+  { item_id: 101, item_code: "IT-MED-RI-0001", item_name: "아목시실린 캡슐 500mg", category_id: 1, category_name: "감염성질환 및 호흡기계", spec: "500mg x 10캡슐", unit: "캡슐", unit_cost: 8500, unit_price: 13500, safety_stock: 100, supplier_id: 21, supplier_name: "유니랩제약", is_active: true },
+  { item_id: 102, item_code: "IT-MED-RI-0002", item_name: "세프라딘 정 500mg", category_id: 1, category_name: "감염성질환 및 호흡기계", spec: "100정/PTP", unit: "정", unit_cost: 12000, unit_price: 18000, safety_stock: 100, supplier_id: 16, supplier_name: "한결제약", is_active: true },
+  { item_id: 201, item_code: "IT-MED-GC-0001", item_name: "아제스틴 정", category_id: 2, category_name: "소화기계 및 순환기계", spec: "500정/병", unit: "병", unit_cost: 15000, unit_price: 22000, safety_stock: 80, supplier_id: 14, supplier_name: "메디코어제약", is_active: true },
+  { item_id: 202, item_code: "IT-MED-GC-0002", item_name: "암로디핀 베실산염 5mg", category_id: 2, category_name: "소화기계 및 순환기계", spec: "30정/PTP", unit: "정", unit_cost: 4200, unit_price: 6800, safety_stock: 150, supplier_id: 15, supplier_name: "세움파마", is_active: true },
+  { item_id: 301, item_code: "IT-MED-NP-0001", item_name: "뉴로펜 서방정 300mg", category_id: 3, category_name: "신경계 및 정신/행동장애", spec: "100정/병", unit: "정", unit_cost: 18000, unit_price: 27000, safety_stock: 50, supplier_id: 19, supplier_name: "그린셀제약", is_active: true },
+  { item_id: 401, item_code: "IT-MED-EM-0001", item_name: "메트포르민 염산염 500mg", category_id: 4, category_name: "호르몬 및 대사성 의약품", spec: "100정/PTP", unit: "정", unit_cost: 3500, unit_price: 5500, safety_stock: 200, supplier_id: 17, supplier_name: "이노젠파마", is_active: true },
+  { item_id: 501, item_code: "IT-MED-OT-0001", item_name: "쿨렉스파스", category_id: 5, category_name: "기타", spec: "6매/봉", unit: "개", unit_cost: 2400, unit_price: 4200, safety_stock: 100, supplier_id: 13, supplier_name: "아진바이오", is_active: true },
+  { item_id: 502, item_code: "IT-MED-OT-0002", item_name: "메디컬 소독용 에탄올 500mL", category_id: 5, category_name: "기타", spec: "500mL", unit: "병", unit_cost: 1800, unit_price: 3200, safety_stock: 60, supplier_id: 13, supplier_name: "아진바이오", is_active: false },
+]
 
 const onlyDigits = (value: string) => value.replace(/\D/g, "")
+
+const EMPTY_FORM = {
+  item_name: "",
+  category_id: CATEGORIES[0].category_id,
+  code_number: "0001",
+  supplier_id: SUPPLIERS[0].supplier_id,
+  spec: "",
+  unit_qty: 1,
+  unit: ITEM_UNITS[0] as string,
+  unit_cost: 0,
+  unit_price: 0,
+  safety_stock: 0,
+}
+
+type ItemForm = typeof EMPTY_FORM
 
 /** 숫자 입력 + 화살표(1단위 증감) + 뒤에 연한 색으로 고정되는 단위 */
 function QuantityInput({
@@ -210,9 +91,7 @@ function QuantityInput({
                 className="shrink-0 self-stretch pl-1 pr-2 text-sm bg-transparent text-gray-400 outline-none cursor-pointer"
             >
               {unitOptions.map((u) => (
-                  <option key={u} value={u} className="text-gray-700">
-                    {u}
-                  </option>
+                  <option key={u} value={u} className="text-gray-700">{u}</option>
               ))}
             </select>
         ) : (
@@ -259,63 +138,76 @@ const inputClass =
     "w-full px-3 py-2 text-sm border border-gray-300 rounded-lg outline-none focus:border-blue-500"
 
 export function ProductPage() {
-  const [products, setProducts] = useState<ProductMaster[]>(PRODUCTS)
-  const [searchTerm, setSearchTerm] = useState("")
-  const [selectedCategory, setSelectedCategory] = useState("전체")
+  const [items, setItems] = useState<Item[]>(ITEMS)
+  const [keyword, setKeyword] = useState("")
+  const [categoryFilter, setCategoryFilter] = useState("전체")
+  const [includeInactive, setIncludeInactive] = useState(false)
   const [showModal, setShowModal] = useState(false)
-  const [form, setForm] = useState<ProductForm>(EMPTY_FORM)
+  const [form, setForm] = useState<ItemForm>(EMPTY_FORM)
 
-  const filteredProducts = products.filter((p) => {
-    const matchSearch =
-        p.name.includes(searchTerm) ||
-        p.code.includes(searchTerm) ||
-        p.manufacturer.includes(searchTerm)
-    const matchCategory = selectedCategory === "전체" || p.category === selectedCategory
-    return matchSearch && matchCategory
+  // 6.1 keyword 는 상품 코드 또는 제품명을 검색하고, 기본적으로 단종 상품은 제외한다
+  const filteredItems = items.filter((p) => {
+    const matchKeyword = p.item_name.includes(keyword) || p.item_code.includes(keyword)
+    const matchCategory = categoryFilter === "전체" || p.category_name === categoryFilter
+    const matchActive = includeInactive || p.is_active
+    return matchKeyword && matchCategory && matchActive
   })
 
-  const codePrefix = CATEGORY_CODE_PREFIX[form.category] ?? "ETC"
+  const categoryName =
+      CATEGORIES.find((c) => c.category_id === form.category_id)?.category_name ?? "기타"
+  const codePrefix = itemCodePrefix(categoryName)
 
-  /** 해당 카테고리에서 아직 쓰지 않은 다음 일련번호 */
-  const nextCodeNumber = (category: string) => {
-    const prefix = CATEGORY_CODE_PREFIX[category] ?? "ETC"
-    const used = products
-        .filter((p) => p.code.startsWith(`${prefix}-`))
-        .map((p) => Number(p.code.slice(prefix.length + 1)))
+  /**
+   * 서버가 채번하는 값(DB 설계서 7.)을 등록 화면에서 미리 보여주기 위한 추정치.
+   * 실제 코드는 6.3 등록 응답의 item_code 를 따른다.
+   */
+  const nextCodeNumber = (categoryId: number) => {
+    const name = CATEGORIES.find((c) => c.category_id === categoryId)?.category_name ?? "기타"
+    const prefix = itemCodePrefix(name)
+    const used = items
+        .filter((p) => p.item_code.startsWith(prefix))
+        .map((p) => Number(p.item_code.slice(prefix.length)))
         .filter((n) => Number.isFinite(n))
-    return String((used.length ? Math.max(...used) : 0) + 1).padStart(3, "0")
+    return String((used.length ? Math.max(...used) : 0) + 1).padStart(4, "0")
   }
 
-  const update = <K extends keyof ProductForm>(key: K, value: ProductForm[K]) =>
+  const update = <K extends keyof ItemForm>(key: K, value: ItemForm[K]) =>
       setForm((prev) => ({ ...prev, [key]: value }))
 
   const openCreate = () => {
-    setForm({ ...EMPTY_FORM, codeNumber: nextCodeNumber(EMPTY_FORM.category) })
+    setForm({ ...EMPTY_FORM, code_number: nextCodeNumber(EMPTY_FORM.category_id) })
     setShowModal(true)
   }
 
-  const changeCategory = (category: string) =>
-      setForm((prev) => ({ ...prev, category, codeNumber: nextCodeNumber(category) }))
+  const changeCategory = (categoryId: number) =>
+      setForm((prev) => ({ ...prev, category_id: categoryId, code_number: nextCodeNumber(categoryId) }))
 
   const handleSave = () => {
-    const newProduct: ProductMaster = {
-      code: `${codePrefix}-${form.codeNumber.padStart(3, "0")}`,
-      name: form.name.trim() || "이름 없는 상품",
-      category: form.category,
-      indication: form.indication.trim(),
-      spec: form.spec.trim() || "-",
-      unit: form.unitQty > 1 ? `${form.unitQty}${form.unit}` : form.unit,
-      costPrice: form.costPrice,
-      salePrice: form.salePrice,
-      stock: form.stock,
-      safetyStock: form.safetyStock,
-      manufacturer: form.manufacturer,
-      drugType: form.drugType,
-      status: "정상",
+    const category = CATEGORIES.find((c) => c.category_id === form.category_id)
+    const supplier = SUPPLIERS.find((s) => s.supplier_id === form.supplier_id)
+    const newItem: Item = {
+      item_id: Math.max(0, ...items.map((p) => p.item_id)) + 1,
+      item_code: `${codePrefix}${form.code_number.padStart(4, "0")}`,
+      item_name: form.item_name.trim() || "이름 없는 상품",
+      category_id: form.category_id,
+      category_name: category?.category_name ?? "기타",
+      spec: form.spec.trim() || null,
+      // 포장 수량이 2 이상이면 "10박스" 처럼 수량을 포함해 적는다
+      unit: form.unit_qty > 1 ? `${form.unit_qty}${form.unit}` : form.unit,
+      unit_cost: form.unit_cost,
+      unit_price: form.unit_price,
+      safety_stock: form.safety_stock,
+      supplier_id: form.supplier_id,
+      supplier_name: supplier?.supplier_name ?? "-",
+      is_active: true,
     }
-    setProducts((prev) => [...prev, newProduct])
+    setItems((prev) => [...prev, newItem])
     setShowModal(false)
   }
+
+  /** 6.4 단종 처리 — is_active 토글 */
+  const toggleActive = (itemId: number) =>
+      setItems((prev) => prev.map((p) => (p.item_id === itemId ? { ...p, is_active: !p.is_active } : p)))
 
   return (
       <div className="space-y-6">
@@ -341,23 +233,30 @@ export function ProductPage() {
           <div className="flex items-center gap-3 flex-1 min-w-[280px]">
             <input
                 type="text"
-                placeholder="상품명, 상품코드, 제약사 검색..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="상품명, 상품코드 검색..."
+                value={keyword}
+                onChange={(e) => setKeyword(e.target.value)}
                 className="w-full px-3.5 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-blue-500"
             />
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-1.5 text-sm text-gray-600 cursor-pointer">
+              <input
+                  type="checkbox"
+                  checked={includeInactive}
+                  onChange={(e) => setIncludeInactive(e.target.checked)}
+                  className="cursor-pointer"
+              />
+              단종 포함
+            </label>
             <select
-                value={selectedCategory}
-                onChange={(e) => setSelectedCategory(e.target.value)}
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value)}
                 className="px-3.5 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:border-blue-500"
             >
               <option value="전체">전체 카테고리</option>
               {CATEGORIES.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
+                  <option key={c.category_id} value={c.category_name}>{c.category_name}</option>
               ))}
             </select>
           </div>
@@ -367,68 +266,69 @@ export function ProductPage() {
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm text-gray-600">
-              <thead className="bg-gray-50 text-xs text-gray-500 uppercase border-b border-gray-200">
+              <thead className="bg-gray-50 text-xs text-gray-500 border-b border-gray-200">
               <tr>
                 <th className="px-4 py-3.5 font-semibold">상품코드</th>
                 <th className="px-4 py-3.5 font-semibold">상품명</th>
                 <th className="px-4 py-3.5 font-semibold">카테고리</th>
-                <th className="px-4 py-3.5 font-semibold">구분</th>
                 <th className="px-4 py-3.5 font-semibold">규격 / 단위</th>
                 <th className="px-4 py-3.5 font-semibold text-right">매입가</th>
                 <th className="px-4 py-3.5 font-semibold text-right">판매가</th>
-                <th className="px-4 py-3.5 font-semibold text-right">재고량</th>
+                <th className="px-4 py-3.5 font-semibold text-right">안전재고</th>
                 <th className="px-4 py-3.5 font-semibold text-center">상태</th>
+                <th className="px-4 py-3.5 font-semibold text-center"></th>
               </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
-              {filteredProducts.map((p) => {
-                const catStyle = CATEGORY_COLORS[p.category] || CATEGORY_COLORS["기타"]
-                const isLowStock = p.stock <= p.safetyStock
+              {filteredItems.map((p) => {
+                const catStyle = CATEGORY_COLORS[p.category_name] ?? CATEGORY_COLORS["기타"]
                 return (
-                    <tr key={p.code} className="hover:bg-gray-50 transition-colors">
+                    <tr key={p.item_id} className="hover:bg-gray-50 transition-colors" style={{ opacity: p.is_active ? 1 : 0.55 }}>
                       <td className="px-4 py-3 font-mono text-xs font-semibold text-gray-800">
-                        {p.code}
+                        {p.item_code}
                       </td>
                       <td className="px-4 py-3">
-                        <p className="font-medium text-gray-900">{p.name}</p>
-                        <p className="text-xs text-gray-400">{p.manufacturer}</p>
+                        <p className="font-medium text-gray-900">{p.item_name}</p>
+                        <p className="text-xs text-gray-400">{p.supplier_name}</p>
                       </td>
                       <td className="px-4 py-3">
-                      <span
-                          className="inline-block px-2.5 py-1 text-xs font-medium rounded-md"
-                          style={{ background: catStyle.bg, color: catStyle.text }}
-                      >
-                        {p.category}
-                      </span>
+                        <span
+                            className="inline-block px-2.5 py-1 text-xs font-medium rounded-md"
+                            style={{ background: catStyle.bg, color: catStyle.color }}
+                        >
+                          {p.category_name}
+                        </span>
                       </td>
-                      <td className="px-4 py-3 text-xs text-gray-500">{p.drugType}</td>
                       <td className="px-4 py-3 text-xs text-gray-500">
-                        {p.spec} ({p.unit})
+                        {p.spec ?? "-"} ({p.unit})
                       </td>
                       <td className="px-4 py-3 text-right font-medium text-gray-700">
-                        {p.costPrice.toLocaleString()}원
+                        {formatMoney(p.unit_cost)}
                       </td>
                       <td className="px-4 py-3 text-right font-semibold text-gray-900">
-                        {p.salePrice.toLocaleString()}원
+                        {formatMoney(p.unit_price)}
                       </td>
-                      <td className="px-4 py-3 text-right">
-                      <span
-                          className={`font-semibold ${
-                              isLowStock ? "text-red-600" : "text-gray-900"
-                          }`}
-                      >
-                        {p.stock.toLocaleString()}
-                      </span>
-                        {isLowStock && (
-                            <span className="ml-1 text-[10px] px-1.5 py-0.5 bg-red-100 text-red-700 rounded font-normal">
-                          부족
-                        </span>
-                        )}
+                      <td className="px-4 py-3 text-right text-gray-700">
+                        {formatNumber(p.safety_stock)}
                       </td>
                       <td className="px-4 py-3 text-center">
-                      <span className="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-green-100 text-green-800 rounded-full">
-                        {p.status}
-                      </span>
+                        <span
+                            className="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full"
+                            style={p.is_active
+                                ? { background: "#DCFCE7", color: "#166534" }
+                                : { background: "#F3F4F6", color: "#6B7280" }}
+                        >
+                          {p.is_active ? "판매중" : "단종"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <button
+                            onClick={() => toggleActive(p.item_id)}
+                            className="text-xs font-medium"
+                            style={{ color: p.is_active ? "#DC2626" : "#059669" }}
+                        >
+                          {p.is_active ? "단종 처리" : "단종 해제"}
+                        </button>
                       </td>
                     </tr>
                 )
@@ -436,7 +336,7 @@ export function ProductPage() {
               </tbody>
             </table>
           </div>
-          {filteredProducts.length === 0 && (
+          {filteredItems.length === 0 && (
               <div className="py-14 text-center text-sm text-gray-400">
                 조건에 맞는 상품이 없습니다.
               </div>
@@ -468,16 +368,16 @@ export function ProductPage() {
 
                 <h3 className="font-semibold text-lg text-gray-900 mb-1">새 상품 등록</h3>
                 <p className="text-sm text-gray-500 mb-6">
-                  카테고리를 고르면 상품코드 앞부분이 자동으로 정해집니다.
+                  카테고리를 고르면 상품코드 앞부분(IT-MED-카테고리코드)이 자동으로 정해집니다.
                 </p>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="md:col-span-2">
                     <Field label="상품명">
                       <input
-                          value={form.name}
-                          onChange={(e) => update("name", e.target.value)}
-                          placeholder="아목시실린 캡슐 500mg"
+                          value={form.item_name}
+                          onChange={(e) => update("item_name", e.target.value)}
+                          placeholder="타이레놀정 500mg"
                           className={inputClass}
                       />
                     </Field>
@@ -485,14 +385,12 @@ export function ProductPage() {
 
                   <Field label="카테고리">
                     <select
-                        value={form.category}
-                        onChange={(e) => changeCategory(e.target.value)}
+                        value={form.category_id}
+                        onChange={(e) => changeCategory(Number(e.target.value))}
                         className={selectClass}
                     >
                       {CATEGORIES.map((c) => (
-                          <option key={c} value={c}>
-                            {c}
-                          </option>
+                          <option key={c.category_id} value={c.category_id}>{c.category_name}</option>
                       ))}
                     </select>
                   </Field>
@@ -500,94 +398,61 @@ export function ProductPage() {
                   <Field label="상품코드">
                     <div className="flex items-stretch rounded-lg border border-gray-300 bg-white overflow-hidden focus-within:border-blue-500">
                       <span className="shrink-0 px-3 py-2 text-sm font-mono text-gray-400 bg-gray-50 border-r border-gray-300">
-                        {codePrefix}-
+                        {codePrefix}
                       </span>
                       <input
-                          value={form.codeNumber}
-                          onChange={(e) => update("codeNumber", onlyDigits(e.target.value).slice(0, 3))}
+                          value={form.code_number}
+                          onChange={(e) => update("code_number", onlyDigits(e.target.value).slice(0, 4))}
                           inputMode="numeric"
                           className="w-full min-w-0 px-3 py-2 text-sm font-mono outline-none"
                       />
                     </div>
                   </Field>
 
-                  <Field label="제조사">
+                  <Field label="공급처">
                     <select
-                        value={form.manufacturer}
-                        onChange={(e) => update("manufacturer", e.target.value)}
+                        value={form.supplier_id}
+                        onChange={(e) => update("supplier_id", Number(e.target.value))}
                         className={selectClass}
                     >
-                      {MANUFACTURERS.map((m) => (
-                          <option key={m} value={m}>
-                            {m}
-                          </option>
+                      {SUPPLIERS.map((s) => (
+                          <option key={s.supplier_id} value={s.supplier_id}>{s.supplier_name}</option>
                       ))}
                     </select>
-                  </Field>
-
-                  <Field label="구분">
-                    <select
-                        value={form.drugType}
-                        onChange={(e) => update("drugType", e.target.value as ProductMaster["drugType"])}
-                        className={selectClass}
-                    >
-                      {DRUG_TYPES.map((d) => (
-                          <option key={d} value={d}>
-                            {d}
-                          </option>
-                      ))}
-                    </select>
-                  </Field>
-
-                  <Field label="효능·효과">
-                    <input
-                        value={form.indication}
-                        onChange={(e) => update("indication", e.target.value)}
-                        placeholder="세균성 감염증(인후염, 중이염)"
-                        className={inputClass}
-                    />
                   </Field>
 
                   <Field label="규격">
                     <input
                         value={form.spec}
                         onChange={(e) => update("spec", e.target.value)}
-                        placeholder="100캡슐/병"
+                        placeholder="500mg x 10정"
                         className={inputClass}
                     />
                   </Field>
 
                   <Field label="단위">
                     <QuantityInput
-                        value={form.unitQty}
-                        onChange={(v) => update("unitQty", v)}
+                        value={form.unit_qty}
+                        onChange={(v) => update("unit_qty", v)}
                         unit={form.unit}
-                        unitOptions={UNITS}
-                        onUnitChange={(u) => update("unit", u as Unit)}
-                    />
-                  </Field>
-
-                  <Field label="재고">
-                    <QuantityInput
-                        value={form.stock}
-                        onChange={(v) => update("stock", v)}
-                        unit={form.unit}
+                        unitOptions={ITEM_UNITS}
+                        onUnitChange={(u) => update("unit", u)}
                     />
                   </Field>
 
                   <Field label="안전재고">
                     <QuantityInput
-                        value={form.safetyStock}
-                        onChange={(v) => update("safetyStock", v)}
+                        value={form.safety_stock}
+                        onChange={(v) => update("safety_stock", v)}
                         unit={form.unit}
                     />
                   </Field>
 
-                  <Field label="매입가">
+                  <Field label="매입가 (원가)">
                     <div className="flex items-stretch rounded-lg border border-gray-300 bg-white overflow-hidden focus-within:border-blue-500">
                       <input
-                          value={form.costPrice}
-                          onChange={(e) => update("costPrice", Number(onlyDigits(e.target.value) || 0))}
+                          value={form.unit_cost}
+                          onChange={(e) => update("unit_cost", Number(onlyDigits(e.target.value) || 0))}
                           inputMode="numeric"
                           className="w-full min-w-0 px-3 py-2 text-sm outline-none"
                       />
@@ -598,8 +463,8 @@ export function ProductPage() {
                   <Field label="판매가">
                     <div className="flex items-stretch rounded-lg border border-gray-300 bg-white overflow-hidden focus-within:border-blue-500">
                       <input
-                          value={form.salePrice}
-                          onChange={(e) => update("salePrice", Number(onlyDigits(e.target.value) || 0))}
+                          value={form.unit_price}
+                          onChange={(e) => update("unit_price", Number(onlyDigits(e.target.value) || 0))}
                           inputMode="numeric"
                           className="w-full min-w-0 px-3 py-2 text-sm outline-none"
                       />
@@ -608,7 +473,11 @@ export function ProductPage() {
                   </Field>
                 </div>
 
-                <div className="flex gap-3 mt-8 justify-end">
+                <p className="mt-6 text-xs text-gray-400">
+                  등록하면 기본 창고에 수량 0인 재고가 함께 만들어집니다. 입고는 매입 등록에서 처리합니다.
+                </p>
+
+                <div className="flex gap-3 mt-4 justify-end">
                   <button
                       onClick={() => setShowModal(false)}
                       className="px-5 py-2 text-sm font-medium border border-gray-300 rounded-lg text-gray-600"

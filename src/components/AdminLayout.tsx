@@ -1,18 +1,20 @@
 import { ReactNode, useState } from "react"
-import type { AuthUser, AdminRoute } from "../App"
+import type { AdminRoute } from "../App"
+import { ROLE_LABELS } from "../lib/domain"
+import type { AuthUser, UserRole } from "../types/api"
 
 interface NavItem {
     id: AdminRoute
     label: string
     icon: ReactNode
-    roles: string[]
+    roles: UserRole[]
 }
 
 const NAV_ITEMS: NavItem[] = [
     {
         id: "dashboard",
         label: "대시보드",
-        roles: ["admin", "sales", "warehouse"],
+        roles: ["ADMIN", "SALES", "WAREHOUSE"],
         icon: (
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="3" y="3" width="7" height="7" rx="1" />
@@ -25,7 +27,7 @@ const NAV_ITEMS: NavItem[] = [
     {
         id: "partners",
         label: "거래처 관리",
-        roles: ["admin", "sales"],
+        roles: ["ADMIN", "SALES"],
         icon: (
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="9" cy="7" r="4" />
@@ -37,7 +39,7 @@ const NAV_ITEMS: NavItem[] = [
     {
         id: "products",
         label: "상품 관리",
-        roles: ["admin", "warehouse"],
+        roles: ["ADMIN", "WAREHOUSE"],
         icon: (
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M20 7H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2z" />
@@ -50,7 +52,7 @@ const NAV_ITEMS: NavItem[] = [
     {
         id: "inventory",
         label: "재고 관리",
-        roles: ["admin", "warehouse", "sales"],
+        roles: ["ADMIN", "WAREHOUSE", "SALES"],
         icon: (
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z" />
@@ -62,7 +64,7 @@ const NAV_ITEMS: NavItem[] = [
     {
         id: "orders",
         label: "주문 관리",
-        roles: ["admin", "sales", "warehouse"],
+        roles: ["ADMIN", "SALES", "WAREHOUSE"],
         icon: (
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2" />
@@ -74,7 +76,7 @@ const NAV_ITEMS: NavItem[] = [
     {
         id: "delivery",
         label: "납품 관리",
-        roles: ["admin", "sales", "warehouse"],
+        roles: ["ADMIN", "SALES", "WAREHOUSE"],
         icon: (
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="1" y="3" width="15" height="13" rx="1" />
@@ -87,7 +89,7 @@ const NAV_ITEMS: NavItem[] = [
     {
         id: "purchase",
         label: "매입 관리",
-        roles: ["admin", "warehouse"],
+        roles: ["ADMIN", "WAREHOUSE"],
         icon: (
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="5" y1="12" x2="19" y2="12" />
@@ -98,7 +100,7 @@ const NAV_ITEMS: NavItem[] = [
     {
         id: "sales",
         label: "매출 관리",
-        roles: ["admin", "sales"],
+        roles: ["ADMIN", "SALES"],
         icon: (
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="23 6 13.5 15.5 8.5 10.5 1 18" />
@@ -109,7 +111,7 @@ const NAV_ITEMS: NavItem[] = [
     {
         id: "margin",
         label: "마진 분석",
-        roles: ["admin", "warehouse"],
+        roles: ["ADMIN", "WAREHOUSE"],
         icon: (
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="18" y1="20" x2="18" y2="10" />
@@ -122,7 +124,7 @@ const NAV_ITEMS: NavItem[] = [
     {
         id: "users",
         label: "사용자 관리",
-        roles: ["admin"],
+        roles: ["ADMIN"],
         icon: (
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
@@ -134,16 +136,10 @@ const NAV_ITEMS: NavItem[] = [
     },
 ]
 
-const ROLE_LABELS: Record<string, string> = {
-    admin: "관리자",
-    sales: "영업담당",
-    warehouse: "창고담당",
-}
-
-const ROLE_COLORS: Record<string, string> = {
-    admin: "#0B3D91",
-    sales: "#1677FF",
-    warehouse: "#059669",
+const ROLE_COLORS: Record<UserRole, string> = {
+    ADMIN: "#0B3D91",
+    SALES: "#1677FF",
+    WAREHOUSE: "#059669",
 }
 
 interface Props {

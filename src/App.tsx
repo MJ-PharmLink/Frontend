@@ -13,13 +13,11 @@ import PurchasePage from './pages/PurchasePage'
 import SalesPage from './pages/SalesPage'
 import UsersPage from './pages/UsersPage'
 
-export type UserRole = "admin" | "sales" | "warehouse"
+import type { AuthUser } from "./types/api"
 
-export interface AuthUser {
-  name: string
-  role: UserRole
-  email: string
-}
+// 로그인 사용자와 역할은 API 명세(3.1 로그인 응답)를 그대로 따른다.
+// 기존 화면들이 "../App" 에서 가져다 쓰고 있어 여기서 다시 내보낸다.
+export type { AuthUser, UserRole } from "./types/api"
 
 export type AdminRoute =
     | "dashboard"
@@ -66,9 +64,15 @@ export default function App() {
     )
   }
 
+  // 로그인 없이 어드민 경로로 들어온 경우. 렌더링 중 setState를 호출하면
+  // React가 경고하므로 상태를 바꾸지 않고 로그인 화면을 그대로 보여준다.
   if (!user) {
-    setRoute("login")
-    return null
+    return (
+        <LoginPage
+            onLogin={handleLogin}
+            onBack={() => setRoute("home")}
+        />
+    )
   }
 
   const adminRoute = route as AdminRoute

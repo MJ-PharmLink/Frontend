@@ -52,7 +52,7 @@ export default function DeliveryPage({ user }: Props) {
         return matchStatus && matchSearch
     })
 
-    const canShip = user.role === "admin" || user.role === "warehouse"
+    const canShip = user.role === "ADMIN" || user.role === "WAREHOUSE"
 
     const advanceStatus = (id: number) => {
         setDeliveries((prev) =>
