@@ -1,732 +1,227 @@
 import { useState } from "react"
-import { CATEGORIES, CATEGORY_COLORS } from "../data/products"
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
+import { CUSTOMERS, SALES } from "../data/sample"
+import { formatDate, formatMoney, formatNumber, formatRate } from "../lib/domain"
+import type { SaleDetail } from "../types/api"
 
-interface SaleRecord {
-    id: number
-    saleId: string
-    orderId: string
-    customer: string
-    customerType: "약국" | "병원" | "도매상"
-    productName: string
-    category: string
-    qty: number
-    unitPrice: number
-    unitCost: number
-    revenue: number
-    cost: number
-    margin: number
-    marginRate: number
-    date: string
-}
-
-const INITIAL_SALES: SaleRecord[] = [
-    {
-        id: 1,
-        saleId: "SAL-0901",
-        orderId: "ORD-0821",
-        customer: "새봄약국",
-        customerType: "약국",
-        productName: "페인제로정 500mg",
-        category: "신경계 및 정신/행동장애",
-        qty: 200,
-        unitPrice: 3200,
-        unitCost: 2100,
-        revenue: 640000,
-        cost: 420000,
-        margin: 220000,
-        marginRate: 34.4,
-        date: "2026-09-04",
-    },
-    {
-        id: 2,
-        saleId: "SAL-0902",
-        orderId: "ORD-0822",
-        customer: "한빛대학병원",
-        customerType: "병원",
-        productName: "이지케어이브연질캡슐",
-        category: "신경계 및 정신/행동장애",
-        qty: 150,
-        unitPrice: 4500,
-        unitCost: 3200,
-        revenue: 675000,
-        cost: 480000,
-        margin: 195000,
-        marginRate: 28.9,
-        date: "2026-09-06",
-    },
-    {
-        id: 3,
-        saleId: "SAL-0903",
-        orderId: "ORD-0828",
-        customer: "다온메디유통",
-        customerType: "도매상",
-        productName: "다이제온정",
-        category: "소화기계 및 순환기계",
-        qty: 400,
-        unitPrice: 5100,
-        unitCost: 3600,
-        revenue: 2040000,
-        cost: 1440000,
-        margin: 600000,
-        marginRate: 29.4,
-        date: "2026-09-08",
-    },
-    {
-        id: 4,
-        saleId: "SAL-0904",
-        orderId: "ORD-0829",
-        customer: "푸른길약국",
-        customerType: "약국",
-        productName: "에너지밸런스정",
-        category: "호르몬 및 대사성 의약품",
-        qty: 80,
-        unitPrice: 8500,
-        unitCost: 5800,
-        revenue: 680000,
-        cost: 464000,
-        margin: 216000,
-        marginRate: 31.8,
-        date: "2026-09-09",
-    },
-    {
-        id: 5,
-        saleId: "SAL-0905",
-        orderId: "ORD-0830",
-        customer: "라온종합병원",
-        customerType: "병원",
-        productName: "위편한겔현탁액",
-        category: "소화기계 및 순환기계",
-        qty: 500,
-        unitPrice: 2800,
-        unitCost: 1800,
-        revenue: 1400000,
-        cost: 900000,
-        margin: 500000,
-        marginRate: 35.7,
-        date: "2026-09-10",
-    },
-    {
-        id: 6,
-        saleId: "SAL-0906",
-        orderId: "ORD-0831",
-        customer: "다온메디유통",
-        customerType: "도매상",
-        productName: "알러쉴드정",
-        category: "감염성질환 및 호흡기계",
-        qty: 300,
-        unitPrice: 3800,
-        unitCost: 2600,
-        revenue: 1140000,
-        cost: 780000,
-        margin: 360000,
-        marginRate: 31.6,
-        date: "2026-09-12",
-    },
-    {
-        id: 7,
-        saleId: "SAL-0907",
-        orderId: "ORD-0832",
-        customer: "별하약국",
-        customerType: "약국",
-        productName: "마그온맥스연질캡슐",
-        category: "호르몬 및 대사성 의약품",
-        qty: 60,
-        unitPrice: 10200,
-        unitCost: 7200,
-        revenue: 612000,
-        cost: 432000,
-        margin: 180000,
-        marginRate: 29.4,
-        date: "2026-09-14",
-    },
-    {
-        id: 8,
-        saleId: "SAL-0908",
-        orderId: "ORD-0833",
-        customer: "수원온병원",
-        customerType: "병원",
-        productName: "스킨가드연고",
-        category: "기타",
-        qty: 120,
-        unitPrice: 6200,
-        unitCost: 4400,
-        revenue: 744000,
-        cost: 528000,
-        margin: 216000,
-        marginRate: 29.0,
-        date: "2026-09-16",
-    },
-    {
-        id: 9,
-        saleId: "SAL-0909",
-        orderId: "ORD-0834",
-        customer: "새봄약국",
-        customerType: "약국",
-        productName: "노즈프리쿨스프레이",
-        category: "감염성질환 및 호흡기계",
-        qty: 100,
-        unitPrice: 3900,
-        unitCost: 2900,
-        revenue: 390000,
-        cost: 290000,
-        margin: 100000,
-        marginRate: 25.6,
-        date: "2026-09-18",
-    },
-    {
-        id: 10,
-        saleId: "SAL-0910",
-        orderId: "ORD-0835",
-        customer: "다온메디유통",
-        customerType: "도매상",
-        productName: "브레스뮤코캡슐 200mg",
-        category: "감염성질환 및 호흡기계",
-        qty: 250,
-        unitPrice: 2900,
-        unitCost: 1950,
-        revenue: 725000,
-        cost: 487500,
-        margin: 237500,
-        marginRate: 32.8,
-        date: "2026-09-20",
-    },
-]
+/**
+ * 11.1 ~ 11.2 매출 — 관리자·영업 전용.
+ *
+ * 매출은 납품 완료(9.4) 시점에만 자동으로 생성되며 직접 등록·수정하는 API는
+ * 없다. 매출·원가·마진은 모두 주문 시점 스냅샷 단가로 계산되므로 이후 상품
+ * 마스터 단가가 바뀌어도 변하지 않는다.
+ */
 
 export default function SalesPage() {
-    const [sales, _setSales] = useState<SaleRecord[]>(INITIAL_SALES)
-    const [catFilter, setCatFilter] = useState("전체")
-    const [search, setSearch] = useState("")
-    const [detailItem, setDetailItem] = useState<SaleRecord | null>(null)
-    const [sortKey, setSortKey] =
-        useState<"date" | "revenue" | "margin" | "marginRate">("date")
+  const [partnerFilter, setPartnerFilter] = useState<number | "전체">("전체")
+  const [startDate, setStartDate] = useState("")
+  const [endDate, setEndDate] = useState("")
+  const [detail, setDetail] = useState<SaleDetail | null>(null)
 
-    const filtered = sales
-        .filter((s) => {
-            const matchCat = catFilter === "전체" || s.category === catFilter
-            const matchSearch =
-                s.customer.includes(search) ||
-                s.productName.includes(search) ||
-                s.saleId.includes(search)
-            return matchCat && matchSearch
-        })
-        .sort((a, b) => {
-            if (sortKey === "date") return b.date.localeCompare(a.date)
-            return b[sortKey] - a[sortKey]
-        })
+  const filtered = SALES.filter((s) => {
+    const matchPartner = partnerFilter === "전체" || s.partner_id === partnerFilter
+    const matchStart = startDate === "" || s.sale_date >= startDate
+    const matchEnd = endDate === "" || s.sale_date <= endDate
+    return matchPartner && matchStart && matchEnd
+  }).sort((a, b) => b.sale_date.localeCompare(a.sale_date) || b.sale_id - a.sale_id)
 
-    const totalRevenue = filtered.reduce((s, r) => s + r.revenue, 0)
-    const totalMargin = filtered.reduce((s, r) => s + r.margin, 0)
-    const avgMarginRate = filtered.length
-        ? filtered.reduce((s, r) => s + r.marginRate, 0) / filtered.length
-        : 0
+  const totals = filtered.reduce(
+    (acc, s) => ({
+      sales: acc.sales + s.sales_amount,
+      cost: acc.cost + s.cost_amount,
+      margin: acc.margin + s.margin_amount,
+    }),
+    { sales: 0, cost: 0, margin: 0 },
+  )
+  // 집계 마진율은 합계 기준으로 다시 계산한다 (건별 마진율의 평균이 아니다)
+  const totalRate = totals.sales === 0 ? 0 : (totals.margin / totals.sales) * 100
 
-    return (
-        <div className="space-y-5">
-            <div>
-                <h2 className="font-semibold text-lg" style={{ color: "#1a1a1a" }}>
-                    매출 관리
-                </h2>
-                <p className="text-sm mt-0.5" style={{ color: "#888" }}>
-                    거래건별 매출 현황 및 마진 조회
-                </p>
-            </div>
+  /** 일자별 매출·마진 추이 */
+  const byDate = Object.values(
+    filtered.reduce<Record<string, { date: string; sales: number; margin: number }>>((acc, s) => {
+      acc[s.sale_date] ??= { date: s.sale_date.slice(5).replace("-", "/"), sales: 0, margin: 0 }
+      acc[s.sale_date].sales += s.sales_amount
+      acc[s.sale_date].margin += s.margin_amount
+      return acc
+    }, {}),
+  ).reverse()
 
-            {/* Summary cards */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                {[
-                    {
-                        label: "총 매출건수",
-                        value: `${filtered.length}건`,
-                        color: "#0B3D91",
-                    },
-                    {
-                        label: "매출 합계",
-                        value: `₩${(totalRevenue / 10000).toFixed(0)}만`,
-                        color: "#1D4ED8",
-                    },
-                    {
-                        label: "마진 합계",
-                        value: `₩${(totalMargin / 10000).toFixed(0)}만`,
-                        color: "#059669",
-                    },
-                    {
-                        label: "평균 마진율",
-                        value: `${avgMarginRate.toFixed(1)}%`,
-                        color: "#9A3412",
-                    },
-                ].map((s) => (
-                    <div
-                        key={s.label}
-                        className="bg-white px-4 py-4"
-                        style={{ borderRadius: 8, border: "1px solid #E5EAF0" }}
-                    >
-                        <p className="text-xs" style={{ color: "#999" }}>
-                            {s.label}
-                        </p>
-                        <p
-                            className="text-xl font-bold mt-1"
-                            style={{ color: s.color, fontFamily: "'Inter', sans-serif" }}
-                        >
-                            {s.value}
-                        </p>
-                    </div>
-                ))}
-            </div>
+  const compact = (n: number) =>
+    n >= 100_000_000 ? `${(n / 100_000_000).toFixed(1)}억` : n >= 10_000 ? `${Math.round(n / 10_000)}만` : `${n}`
 
-            {/* Filters */}
-            <div className="flex flex-wrap gap-3 items-center">
-                <div className="flex flex-wrap gap-2">
-                    <button
-                        onClick={() => setCatFilter("전체")}
-                        className="px-3 py-1.5 text-xs font-medium rounded-full transition-all"
-                        style={{
-                            background: catFilter === "전체" ? "#0B3D91" : "#F0F2F5",
-                            color: catFilter === "전체" ? "white" : "#666",
-                        }}
-                    >
-                        전체
-                    </button>
-                    {CATEGORIES.map((cat) => {
-                        const c = CATEGORY_COLORS[cat]
-                        const active = catFilter === cat
-                        return (
-                            <button
-                                key={cat}
-                                onClick={() => setCatFilter(cat)}
-                                className="px-3 py-1.5 text-xs font-medium rounded-full transition-all"
-                                style={{
-                                    background: active ? c.color : c.bg,
-                                    color: active ? "white" : c.color,
-                                    border: `1px solid ${active ? c.color : c.border}`,
-                                }}
-                            >
-                                {cat}
-                            </button>
-                        )
-                    })}
-                </div>
-                <div className="relative">
-                    <svg
-                        className="absolute left-3 top-1/2 -translate-y-1/2"
-                        width="13"
-                        height="13"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="#aaa"
-                        strokeWidth="2"
-                    >
-                        <circle cx="11" cy="11" r="8" />
-                        <path d="m21 21-4.35-4.35" />
-                    </svg>
-                    <input
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                        placeholder="거래처, 의약품명, 매출번호 검색..."
-                        className="pl-8 pr-3 py-1.5 text-sm outline-none"
-                        style={{
-                            border: "1px solid #E5EAF0",
-                            borderRadius: 7,
-                            background: "white",
-                            minWidth: 240,
-                        }}
-                    />
-                </div>
-                {/* Sort */}
-                <select
-                    value={sortKey}
-                    onChange={(e) => setSortKey(e.target.value as typeof sortKey)}
-                    className="text-xs px-2.5 py-1.5 outline-none"
-                    style={{
-                        border: "1px solid #E5EAF0",
-                        borderRadius: 7,
-                        background: "white",
-                        color: "#555",
-                    }}
-                >
-                    <option value="date">최신순</option>
-                    <option value="revenue">매출 높은순</option>
-                    <option value="margin">마진 높은순</option>
-                    <option value="marginRate">마진율 높은순</option>
-                </select>
-            </div>
-
-            {/* Table */}
-            <div
-                className="bg-white overflow-hidden"
-                style={{ borderRadius: 8, border: "1px solid #E5EAF0" }}
-            >
-                <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                        <thead>
-                        <tr
-                            style={{
-                                background: "#FAFAFA",
-                                borderBottom: "1px solid #F0F0F0",
-                            }}
-                        >
-                            {[
-                                "매출번호",
-                                "주문번호",
-                                "거래처",
-                                "의약품",
-                                "카테고리",
-                                "수량",
-                                "매출금액",
-                                "매입원가",
-                                "마진",
-                                "마진율",
-                                "납품일",
-                                "",
-                            ].map((h) => (
-                                <th
-                                    key={h}
-                                    className="px-4 py-3 text-left font-medium"
-                                    style={{
-                                        color: "#aaa",
-                                        fontSize: 11,
-                                        whiteSpace: "nowrap",
-                                    }}
-                                >
-                                    {h}
-                                </th>
-                            ))}
-                        </tr>
-                        </thead>
-                        <tbody>
-                        {filtered.map((s, i) => {
-                            const catColor =
-                                CATEGORY_COLORS[(s.category as keyof typeof CATEGORY_COLORS)]
-                            const isHighMargin = s.marginRate >= 33
-                            return (
-                                <tr
-                                    key={s.id}
-                                    style={{ borderTop: i > 0 ? "1px solid #F5F5F5" : "none" }}
-                                    onMouseEnter={(e) =>
-                                        (e.currentTarget.style.background = "#FAFAFA")
-                                    }
-                                    onMouseLeave={(e) =>
-                                        (e.currentTarget.style.background = "white")
-                                    }
-                                >
-                                    <td
-                                        className="px-4 py-3 text-xs font-medium"
-                                        style={{
-                                            color: "#0B3D91",
-                                            fontFamily: "'Inter', sans-serif",
-                                        }}
-                                    >
-                                        <button
-                                            onClick={() => setDetailItem(s)}
-                                            className="hover:underline"
-                                        >
-                                            {s.saleId}
-                                        </button>
-                                    </td>
-                                    <td
-                                        className="px-4 py-3 text-xs"
-                                        style={{
-                                            color: "#bbb",
-                                            fontFamily: "'Inter', sans-serif",
-                                        }}
-                                    >
-                                        {s.orderId}
-                                    </td>
-                                    <td
-                                        className="px-4 py-3 font-medium"
-                                        style={{ color: "#1a1a1a", whiteSpace: "nowrap" }}
-                                    >
-                                        {s.customer}
-                                        <span className="ml-1 text-xs" style={{ color: "#bbb" }}>
-                        {s.customerType}
-                      </span>
-                                    </td>
-                                    <td
-                                        className="px-4 py-3 text-sm"
-                                        style={{ color: "#333", whiteSpace: "nowrap" }}
-                                    >
-                                        {s.productName}
-                                    </td>
-                                    <td className="px-4 py-3">
-                                        {catColor && (
-                                            <span
-                                                className="text-xs font-medium px-2 py-0.5 rounded-full"
-                                                style={{
-                                                    background: catColor.bg,
-                                                    color: catColor.color,
-                                                }}
-                                            >
-                          {s.category}
-                        </span>
-                                        )}
-                                    </td>
-                                    <td
-                                        className="px-4 py-3 text-sm"
-                                        style={{
-                                            color: "#555",
-                                            fontFamily: "'Inter', sans-serif",
-                                        }}
-                                    >
-                                        {s.qty.toLocaleString()}
-                                    </td>
-                                    <td
-                                        className="px-4 py-3 text-sm font-semibold"
-                                        style={{
-                                            color: "#1a1a1a",
-                                            fontFamily: "'Inter', sans-serif",
-                                        }}
-                                    >
-                                        ₩{s.revenue.toLocaleString()}
-                                    </td>
-                                    <td
-                                        className="px-4 py-3 text-sm"
-                                        style={{
-                                            color: "#888",
-                                            fontFamily: "'Inter', sans-serif",
-                                        }}
-                                    >
-                                        ₩{s.cost.toLocaleString()}
-                                    </td>
-                                    <td
-                                        className="px-4 py-3 text-sm font-medium"
-                                        style={{
-                                            color: "#059669",
-                                            fontFamily: "'Inter', sans-serif",
-                                        }}
-                                    >
-                                        ₩{s.margin.toLocaleString()}
-                                    </td>
-                                    <td className="px-4 py-3">
-                      <span
-                          className="text-xs font-bold px-2 py-0.5 rounded"
-                          style={{
-                              background: isHighMargin ? "#F0FDF4" : "#FFF7ED",
-                              color: isHighMargin ? "#166534" : "#C2410C",
-                          }}
-                      >
-                        {s.marginRate.toFixed(1)}%
-                      </span>
-                                    </td>
-                                    <td
-                                        className="px-4 py-3 text-xs"
-                                        style={{
-                                            color: "#999",
-                                            fontFamily: "'Inter', sans-serif",
-                                        }}
-                                    >
-                                        {s.date}
-                                    </td>
-                                    <td className="px-4 py-3">
-                                        <button
-                                            onClick={() => setDetailItem(s)}
-                                            className="text-xs font-medium"
-                                            style={{ color: "#0B3D91" }}
-                                        >
-                                            상세
-                                        </button>
-                                    </td>
-                                </tr>
-                            )
-                        })}
-                        </tbody>
-                        <tfoot>
-                        <tr
-                            style={{
-                                background: "#F7F9FC",
-                                borderTop: "2px solid #E5EAF0",
-                            }}
-                        >
-                            <td
-                                colSpan={6}
-                                className="px-4 py-3 text-xs font-semibold"
-                                style={{ color: "#666" }}
-                            >
-                                합계 ({filtered.length}건)
-                            </td>
-                            <td
-                                className="px-4 py-3 text-sm font-bold"
-                                style={{
-                                    color: "#0B3D91",
-                                    fontFamily: "'Inter', sans-serif",
-                                }}
-                            >
-                                ₩{totalRevenue.toLocaleString()}
-                            </td>
-                            <td
-                                className="px-4 py-3 text-sm font-bold"
-                                style={{ color: "#888", fontFamily: "'Inter', sans-serif" }}
-                            >
-                                ₩{filtered.reduce((s, r) => s + r.cost, 0).toLocaleString()}
-                            </td>
-                            <td
-                                className="px-4 py-3 text-sm font-bold"
-                                style={{
-                                    color: "#059669",
-                                    fontFamily: "'Inter', sans-serif",
-                                }}
-                            >
-                                ₩{totalMargin.toLocaleString()}
-                            </td>
-                            <td
-                                className="px-4 py-3 text-sm font-bold"
-                                style={{ color: "#333" }}
-                            >
-                                {avgMarginRate.toFixed(1)}%
-                            </td>
-                            <td colSpan={2} />
-                        </tr>
-                        </tfoot>
-                    </table>
-                </div>
-            </div>
-
-            {/* Detail Modal */}
-            {detailItem && (
-                <div
-                    className="fixed inset-0 z-50 flex items-center justify-center p-4"
-                    style={{ background: "rgba(0,0,0,0.45)" }}
-                    onClick={() => setDetailItem(null)}
-                >
-                    <div
-                        className="bg-white w-full max-w-md p-8 relative"
-                        style={{ borderRadius: 12 }}
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        <button
-                            onClick={() => setDetailItem(null)}
-                            className="absolute top-5 right-5 opacity-40 hover:opacity-100"
-                        >
-                            <svg
-                                width="18"
-                                height="18"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="#333"
-                                strokeWidth="2"
-                            >
-                                <line x1="18" y1="6" x2="6" y2="18" />
-                                <line x1="6" y1="6" x2="18" y2="18" />
-                            </svg>
-                        </button>
-                        <h3
-                            className="font-semibold text-lg mb-1"
-                            style={{ color: "#1a1a1a" }}
-                        >
-                            매출 상세 · 마진
-                        </h3>
-                        <p
-                            className="text-xs mb-5"
-                            style={{ color: "#999", fontFamily: "'Inter', sans-serif" }}
-                        >
-                            {detailItem.saleId} / {detailItem.orderId}
-                        </p>
-
-                        <div className="space-y-3 mb-5">
-                            {[
-                                {
-                                    label: "거래처",
-                                    value: `${detailItem.customer} (${detailItem.customerType})`,
-                                },
-                                { label: "의약품", value: detailItem.productName },
-                                { label: "카테고리", value: detailItem.category },
-                                {
-                                    label: "수량",
-                                    value: `${detailItem.qty.toLocaleString()}개`,
-                                },
-                                {
-                                    label: "판매단가",
-                                    value: `₩${detailItem.unitPrice.toLocaleString()}`,
-                                },
-                                {
-                                    label: "원가(단가)",
-                                    value: `₩${detailItem.unitCost.toLocaleString()}`,
-                                },
-                            ].map((row) => (
-                                <div key={row.label} className="flex">
-                  <span
-                      className="w-28 shrink-0 text-xs font-medium"
-                      style={{ color: "#999" }}
-                  >
-                    {row.label}
-                  </span>
-                                    <span
-                                        className="text-sm font-medium"
-                                        style={{ color: "#1a1a1a" }}
-                                    >
-                    {row.value}
-                  </span>
-                                </div>
-                            ))}
-                        </div>
-
-                        {/* Margin breakdown */}
-                        <div
-                            className="p-4 rounded-lg space-y-2"
-                            style={{ background: "#F7F9FC" }}
-                        >
-                            <p
-                                className="text-xs font-semibold mb-3"
-                                style={{ color: "#666" }}
-                            >
-                                마진 분석
-                            </p>
-                            {[
-                                {
-                                    label: "매출금액",
-                                    value: `₩${detailItem.revenue.toLocaleString()}`,
-                                    color: "#0B3D91",
-                                },
-                                {
-                                    label: "매입원가",
-                                    value: `₩${detailItem.cost.toLocaleString()}`,
-                                    color: "#888",
-                                },
-                                {
-                                    label: "마진",
-                                    value: `₩${detailItem.margin.toLocaleString()}`,
-                                    color: "#059669",
-                                },
-                                {
-                                    label: "마진율",
-                                    value: `${detailItem.marginRate.toFixed(1)}%`,
-                                    color: detailItem.marginRate >= 33 ? "#059669" : "#C2410C",
-                                },
-                            ].map((row) => (
-                                <div
-                                    key={row.label}
-                                    className="flex justify-between items-center"
-                                >
-                  <span className="text-xs" style={{ color: "#888" }}>
-                    {row.label}
-                  </span>
-                                    <span
-                                        className="text-sm font-bold"
-                                        style={{
-                                            color: row.color,
-                                            fontFamily: "'Inter', sans-serif",
-                                        }}
-                                    >
-                    {row.value}
-                  </span>
-                                </div>
-                            ))}
-                        </div>
-
-                        <div className="flex justify-end mt-5">
-                            <button
-                                onClick={() => setDetailItem(null)}
-                                className="px-5 py-2 text-sm font-medium"
-                                style={{
-                                    border: "1px solid #E5EAF0",
-                                    borderRadius: 7,
-                                    color: "#666",
-                                }}
-                            >
-                                닫기
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
+  return (
+      <div className="space-y-5">
+        <div>
+          <h2 className="font-semibold text-lg" style={{ color: "#1a1a1a" }}>매출 관리</h2>
+          <p className="text-sm mt-0.5" style={{ color: "#888" }}>
+            납품 완료된 주문에서 자동 생성된 매출 기록입니다 · 직접 등록·수정할 수 없습니다
+          </p>
         </div>
-    )
+
+        {/* 요약 */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {[
+            { label: "매출액", value: formatMoney(totals.sales), color: "#0B3D91" },
+            { label: "매출원가", value: formatMoney(totals.cost), color: "#1677FF" },
+            { label: "마진", value: formatMoney(totals.margin), color: "#059669" },
+            { label: "마진율", value: formatRate(totalRate), color: "#C2410C" },
+          ].map((s) => (
+              <div key={s.label} className="bg-white px-4 py-4" style={{ borderRadius: 8, border: "1px solid #E5EAF0" }}>
+                <p className="text-xs" style={{ color: "#999" }}>{s.label}</p>
+                <p className="text-xl font-bold mt-1" style={{ color: s.color, fontFamily: "'Inter', sans-serif" }}>{s.value}</p>
+              </div>
+          ))}
+        </div>
+
+        {/* 필터 */}
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+              value={partnerFilter}
+              onChange={(e) => setPartnerFilter(e.target.value === "전체" ? "전체" : Number(e.target.value))}
+              className="px-3 py-1.5 text-xs outline-none cursor-pointer"
+              style={{ border: "1px solid #E5EAF0", borderRadius: 7, background: "white" }}
+          >
+            <option value="전체">전체 거래처</option>
+            {CUSTOMERS.map((p) => (
+                <option key={p.partner_id} value={p.partner_id}>{p.name}</option>
+            ))}
+          </select>
+          <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="px-3 py-1.5 text-xs outline-none" style={{ border: "1px solid #E5EAF0", borderRadius: 7, background: "white" }} />
+          <span className="text-xs" style={{ color: "#999" }}>~</span>
+          <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="px-3 py-1.5 text-xs outline-none" style={{ border: "1px solid #E5EAF0", borderRadius: 7, background: "white" }} />
+          {(startDate || endDate || partnerFilter !== "전체") && (
+              <button onClick={() => { setStartDate(""); setEndDate(""); setPartnerFilter("전체") }} className="px-3 py-1.5 text-xs" style={{ color: "#0B3D91" }}>
+                초기화
+              </button>
+          )}
+          <span className="ml-auto text-xs" style={{ color: "#999" }}>{filtered.length}건</span>
+        </div>
+
+        {/* 일자별 추이 */}
+        {byDate.length > 0 && (
+            <div className="bg-white p-6" style={{ borderRadius: 8, border: "1px solid #E5EAF0" }}>
+              <p className="font-semibold text-sm mb-1" style={{ color: "#1a1a1a" }}>일자별 매출 / 마진</p>
+              <p className="text-xs mb-5" style={{ color: "#999" }}>매출일(sale_date) 기준</p>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={byDate} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#F0F0F0" vertical={false} />
+                  <XAxis dataKey="date" tick={{ fontSize: 11, fill: "#999" }} axisLine={false} tickLine={false} />
+                  <YAxis tickFormatter={(v) => compact(Number(v))} tick={{ fontSize: 11, fill: "#999" }} axisLine={false} tickLine={false} />
+                  <Tooltip
+                      formatter={(value, name) => [formatMoney(Number(value ?? 0)), name === "sales" ? "매출" : "마진"]}
+                      contentStyle={{ fontSize: 12, borderRadius: 6, border: "1px solid #E5EAF0" }}
+                  />
+                  <Bar dataKey="sales" name="sales" fill="#0B3D91" radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="margin" name="margin" fill="#059669" radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+        )}
+
+        {/* 목록 */}
+        <div className="bg-white" style={{ borderRadius: 8, border: "1px solid #E5EAF0" }}>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+              <tr style={{ background: "#F7F9FC", borderBottom: "1px solid #E5EAF0" }}>
+                {["매출번호", "주문번호", "거래처", "매출액", "매출원가", "마진", "마진율", "매출일", ""].map((h) => (
+                    <th key={h} className="px-5 py-3 text-left font-medium" style={{ color: "#888", fontSize: 12, whiteSpace: "nowrap" }}>{h}</th>
+                ))}
+              </tr>
+              </thead>
+              <tbody>
+              {filtered.map((s, i) => (
+                  <tr
+                      key={s.sale_id}
+                      style={{ borderTop: i > 0 ? "1px solid #F3F4F6" : "none" }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = "#FAFAFA")}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = "white")}
+                  >
+                    <td className="px-5 py-4 text-xs font-mono" style={{ color: "#666" }}>#{s.sale_id}</td>
+                    <td className="px-5 py-4 text-xs font-mono" style={{ color: "#666" }}>{s.order_number}</td>
+                    <td className="px-5 py-4 font-medium" style={{ color: "#1a1a1a" }}>{s.partner_name}</td>
+                    <td className="px-5 py-4 font-medium" style={{ color: "#333", fontFamily: "'Inter', sans-serif" }}>{formatMoney(s.sales_amount)}</td>
+                    <td className="px-5 py-4 text-sm" style={{ color: "#777", fontFamily: "'Inter', sans-serif" }}>{formatMoney(s.cost_amount)}</td>
+                    <td className="px-5 py-4 font-medium" style={{ color: "#059669", fontFamily: "'Inter', sans-serif" }}>{formatMoney(s.margin_amount)}</td>
+                    <td className="px-5 py-4">
+                      <span className="text-xs font-medium px-2 py-0.5 rounded-full" style={{ background: "#ECFDF5", color: "#047857" }}>
+                        {formatRate(s.margin_rate)}
+                      </span>
+                    </td>
+                    <td className="px-5 py-4 text-xs" style={{ color: "#999", fontFamily: "'Inter', sans-serif" }}>{formatDate(s.sale_date)}</td>
+                    <td className="px-5 py-4">
+                      <button onClick={() => setDetail(s)} className="text-xs font-medium" style={{ color: "#0B3D91" }}>상세</button>
+                    </td>
+                  </tr>
+              ))}
+              </tbody>
+            </table>
+          </div>
+          {filtered.length === 0 && (
+              <div className="py-14 text-center text-sm" style={{ color: "#999" }}>조건에 맞는 매출 기록이 없습니다.</div>
+          )}
+        </div>
+
+        {/* 11.2 매출 상세 및 거래 건별 마진 */}
+        {detail && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.45)" }} onClick={() => setDetail(null)}>
+              <div className="bg-white w-full max-w-3xl p-8 relative" style={{ borderRadius: 12, maxHeight: "90vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+                <button onClick={() => setDetail(null)} aria-label="닫기" className="absolute top-5 right-5 opacity-40 hover:opacity-100">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#333" strokeWidth="2">
+                    <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+                <h3 className="font-semibold text-lg" style={{ color: "#1a1a1a" }}>매출 #{detail.sale_id}</h3>
+                <p className="text-sm mt-1 mb-6" style={{ color: "#888" }}>
+                  {detail.partner_name} · {detail.order_number} · 납품 #{detail.delivery_id} · {formatDate(detail.sale_date)}
+                </p>
+
+                <table className="w-full text-sm mb-5">
+                  <thead>
+                  <tr style={{ background: "#F7F9FC" }}>
+                    {["상품", "수량", "판매단가", "원가", "매출", "원가합", "마진"].map((h) => (
+                        <th key={h} className="px-3 py-2 text-left font-medium" style={{ color: "#888", fontSize: 11 }}>{h}</th>
+                    ))}
+                  </tr>
+                  </thead>
+                  <tbody>
+                  {detail.items.map((item, i) => (
+                      <tr key={item.item_id} style={{ borderTop: i > 0 ? "1px solid #F3F4F6" : "none" }}>
+                        <td className="px-3 py-2">
+                          <p className="text-sm font-medium" style={{ color: "#1a1a1a" }}>{item.item_name}</p>
+                          <p className="font-mono text-xs" style={{ color: "#aaa" }}>{item.item_code}</p>
+                        </td>
+                        <td className="px-3 py-2 text-sm" style={{ color: "#555", fontFamily: "'Inter', sans-serif" }}>{formatNumber(item.quantity)}</td>
+                        <td className="px-3 py-2 text-xs" style={{ color: "#777", fontFamily: "'Inter', sans-serif" }}>{formatMoney(item.unit_price)}</td>
+                        <td className="px-3 py-2 text-xs" style={{ color: "#777", fontFamily: "'Inter', sans-serif" }}>{formatMoney(item.unit_cost)}</td>
+                        <td className="px-3 py-2 text-sm" style={{ color: "#333", fontFamily: "'Inter', sans-serif" }}>{formatMoney(item.sales_amount)}</td>
+                        <td className="px-3 py-2 text-xs" style={{ color: "#777", fontFamily: "'Inter', sans-serif" }}>{formatMoney(item.cost_amount)}</td>
+                        <td className="px-3 py-2 text-sm font-medium" style={{ color: "#059669", fontFamily: "'Inter', sans-serif" }}>{formatMoney(item.margin_amount)}</td>
+                      </tr>
+                  ))}
+                  </tbody>
+                </table>
+
+                <div className="grid grid-cols-4 gap-3 pt-5" style={{ borderTop: "1px solid #F0F0F0" }}>
+                  {[
+                    { label: "매출액", value: formatMoney(detail.sales_amount), color: "#0B3D91" },
+                    { label: "매출원가", value: formatMoney(detail.cost_amount), color: "#777" },
+                    { label: "마진", value: formatMoney(detail.margin_amount), color: "#059669" },
+                    { label: "마진율", value: formatRate(detail.margin_rate), color: "#C2410C" },
+                  ].map((s) => (
+                      <div key={s.label} className="px-4 py-3" style={{ background: "#F7F9FC", borderRadius: 8 }}>
+                        <p className="text-xs" style={{ color: "#999" }}>{s.label}</p>
+                        <p className="text-base font-bold mt-0.5" style={{ color: s.color, fontFamily: "'Inter', sans-serif" }}>{s.value}</p>
+                      </div>
+                  ))}
+                </div>
+
+                <div className="flex justify-end mt-6">
+                  <button onClick={() => setDetail(null)} className="px-5 py-2 text-sm font-medium" style={{ border: "1px solid #E5EAF0", borderRadius: 7, color: "#666" }}>닫기</button>
+                </div>
+              </div>
+            </div>
+        )}
+      </div>
+  )
 }

@@ -1,397 +1,259 @@
 import { useState } from "react"
-import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-  LineChart, Line, PieChart, Pie, Cell,
-  AreaChart, Area,
-} from "recharts"
-import { PRODUCTS, CATEGORY_COLORS } from "../data/products"
+import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
+import { ITEMS, SALES, TODAY } from "../data/sample"
+import { firstDayOfMonthKst, formatDate, formatMoney, formatRate } from "../lib/domain"
+import { MARGIN_GROUP_BY } from "../types/api"
+import type { MarginAmounts, MarginGroupBy, MarginItemGroup, MarginPartnerGroup } from "../types/api"
 
-const monthlyData = [
-  { month: "4월", sales: 182000000, purchase: 128000000, margin: 54000000 },
-  { month: "5월", sales: 196000000, purchase: 137000000, margin: 59000000 },
-  { month: "6월", sales: 175000000, purchase: 124000000, margin: 51000000 },
-  { month: "7월", sales: 210000000, purchase: 145000000, margin: 65000000 },
-  { month: "8월", sales: 228000000, purchase: 158000000, margin: 70000000 },
-  { month: "9월", sales: 243000000, purchase: 162000000, margin: 81000000 },
-].map((d) => ({ ...d, marginRate: +((d.margin / d.sales) * 100).toFixed(1) }))
+/**
+ * 11.3 마진 집계 — 관리자·영업 전용.
+ *
+ * start_date / end_date 는 필수이고, group_by 를 주면 거래처별 또는 상품별로
+ * 묶어서 돌려준다. 집계 마진율은 건별 마진율의 평균이 아니라
+ * SUM(margin) / SUM(sales) × 100 으로 계산한다(3.16).
+ */
 
-const byPartnerData = [
-  { name: "서울성모병원",  sales: 85000000, purchase: 60000000, margin: 25000000 },
-  { name: "분당서울대병원", sales: 78000000, purchase: 54000000, margin: 24000000 },
-  { name: "메디팜도매",    sales: 72000000, purchase: 52000000, margin: 20000000 },
-  { name: "경동제약도매",  sales: 55000000, purchase: 39000000, margin: 16000000 },
-  { name: "한강약국",      sales: 41000000, purchase: 30000000, margin: 11000000 },
-]
+const BAR_COLORS = ["#0B3D91", "#1677FF", "#059669", "#7C3AED", "#C2410C", "#0891B2", "#BE185D"]
 
-// 상품별 마진: 실제 PRODUCTS 데이터에서 계산
-const byProductData = PRODUCTS.slice(0, 8).map((p) => {
-  const sales    = p.salePrice * p.safetyStock * 3
-  const purchase = p.costPrice * p.safetyStock * 3
-  const margin   = sales - purchase
-  const marginRate = +((margin / sales) * 100).toFixed(1)
-  return { name: p.name, indication: p.indication, category: p.category, sales, purchase, margin, marginRate }
-}).sort((a, b) => b.margin - a.margin)
-
-const pieCategoryData = [
-  { name: "감염성질환 및 호흡기계",  value: 28, color: CATEGORY_COLORS["감염성질환 및 호흡기계"].color },
-  { name: "소화기계 및 순환기계",    value: 22, color: CATEGORY_COLORS["소화기계 및 순환기계"].color },
-  { name: "신경계 및 정신/행동장애", value: 25, color: CATEGORY_COLORS["신경계 및 정신/행동장애"].color },
-  { name: "호르몬 및 대사성 의약품", value: 18, color: CATEGORY_COLORS["호르몬 및 대사성 의약품"].color },
-  { name: "기타",                    value: 7,  color: "#9CA3AF" },
-]
-
-// 거래 내역 (공통 제품 데이터 참조)
-const TRANSACTIONS = [
-  { id: "TRX-001", date: "2026.09.11", type: "매출", partner: "한강약국",      code: "INF-001", qty: 500,  unitCost: 4200, unitSale: 7500  },
-  { id: "TRX-002", date: "2026.09.11", type: "매입", partner: "동아제약",       code: "INF-001", qty: 200,  unitCost: 4200, unitSale: 0     },
-  { id: "TRX-003", date: "2026.09.10", type: "매출", partner: "서울성모병원",   code: "NEU-001", qty: 1200, unitCost: 1800, unitSale: 3200  },
-  { id: "TRX-004", date: "2026.09.10", type: "매출", partner: "강남약국",       code: "HOR-001", qty: 300,  unitCost: 7200, unitSale: 12500 },
-  { id: "TRX-005", date: "2026.09.09", type: "매입", partner: "대웅제약",       code: "NEU-002", qty: 300,  unitCost: 2600, unitSale: 0     },
-  { id: "TRX-006", date: "2026.09.09", type: "매출", partner: "경동제약도매",   code: "ETC-001", qty: 400,  unitCost: 3600, unitSale: 6200  },
-  { id: "TRX-007", date: "2026.09.08", type: "매출", partner: "이화약국",       code: "INF-002", qty: 150,  unitCost: 5800, unitSale: 9800  },
-  { id: "TRX-008", date: "2026.09.08", type: "매입", partner: "레킷벤키저코리아", code: "INF-005", qty: 100, unitCost: 2800, unitSale: 0    },
-].map((t) => {
-  const prod = PRODUCTS.find((p) => p.code === t.code)
-  return {
-    ...t,
-    productName: prod?.name ?? t.code,
-    category: prod?.category ?? "-",
-    indication: prod?.indication ?? "-",
-    margin: t.type === "매출" ? (t.unitSale - t.unitCost) * t.qty : 0,
-  }
-})
-
-function fmt(n: number) {
-  if (n >= 100000000) return `${(n / 100000000).toFixed(1)}억`
-  if (n >= 10000) return `${(n / 10000).toFixed(0)}만`
-  return n.toLocaleString()
-}
-
-type ViewTab = "overview" | "partner" | "product" | "transactions"
-
-const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: { name: string; value: number; color: string }[]; label?: string }) => {
-  if (!active || !payload?.length) return null
-  return (
-    <div className="bg-white p-3 shadow-lg text-xs" style={{ borderRadius: 8, border: "1px solid #E5EAF0" }}>
-      <p className="font-semibold mb-2" style={{ color: "#333" }}>{label}</p>
-      {payload.map((p) => (
-        <p key={p.name} style={{ color: p.color }}>
-          {p.name}: ₩{Number(p.value).toLocaleString()}
-        </p>
-      ))}
-    </div>
-  )
+function rateOf(margin: number, sales: number): number {
+  return sales === 0 ? 0 : Number(((margin / sales) * 100).toFixed(2))
 }
 
 export default function MarginPage() {
-  const [tab, setTab] = useState<ViewTab>("overview")
-  const [period, setPeriod] = useState("6개월")
+  const [startDate, setStartDate] = useState(firstDayOfMonthKst())
+  const [endDate, setEndDate] = useState(TODAY)
+  const [groupBy, setGroupBy] = useState<MarginGroupBy>("PARTNER")
 
-  const latest = monthlyData[monthlyData.length - 1]
-  const prev   = monthlyData[monthlyData.length - 2]
-  const marginGrowth = (((latest.margin - prev.margin) / prev.margin) * 100).toFixed(1)
+  const invalidRange = startDate > endDate
 
-  const tabs: { key: ViewTab; label: string }[] = [
-    { key: "overview",      label: "전체 현황" },
-    { key: "partner",       label: "거래처별" },
-    { key: "product",       label: "상품별" },
-    { key: "transactions",  label: "거래 내역" },
-  ]
+  const inRange = SALES.filter((s) => !invalidRange && s.sale_date >= startDate && s.sale_date <= endDate)
+
+  const summary: MarginAmounts = (() => {
+    const sales_amount = inRange.reduce((sum, s) => sum + s.sales_amount, 0)
+    const cost_amount = inRange.reduce((sum, s) => sum + s.cost_amount, 0)
+    const margin_amount = sales_amount - cost_amount
+    return { sales_amount, cost_amount, margin_amount, margin_rate: rateOf(margin_amount, sales_amount) }
+  })()
+
+  /** group_by = PARTNER — 매출 레코드를 거래처로 묶는다 */
+  const partnerGroups: MarginPartnerGroup[] = Object.values(
+    inRange.reduce<Record<number, MarginPartnerGroup>>((acc, s) => {
+      acc[s.partner_id] ??= {
+        partner_id: s.partner_id,
+        partner_name: s.partner_name,
+        sales_amount: 0,
+        cost_amount: 0,
+        margin_amount: 0,
+        margin_rate: 0,
+      }
+      acc[s.partner_id].sales_amount += s.sales_amount
+      acc[s.partner_id].cost_amount += s.cost_amount
+      acc[s.partner_id].margin_amount += s.margin_amount
+      return acc
+    }, {}),
+  )
+    .map((g) => ({ ...g, margin_rate: rateOf(g.margin_amount, g.sales_amount) }))
+    .sort((a, b) => b.margin_amount - a.margin_amount)
+
+  /** group_by = ITEM — 매출 품목(order_items 스냅샷)을 상품으로 묶는다 */
+  const itemGroups: MarginItemGroup[] = Object.values(
+    inRange
+      .flatMap((s) => s.items)
+      .reduce<Record<number, MarginItemGroup>>((acc, line) => {
+        acc[line.item_id] ??= {
+          item_id: line.item_id,
+          item_code: line.item_code,
+          item_name: line.item_name,
+          sales_amount: 0,
+          cost_amount: 0,
+          margin_amount: 0,
+          margin_rate: 0,
+        }
+        acc[line.item_id].sales_amount += line.sales_amount
+        acc[line.item_id].cost_amount += line.cost_amount
+        acc[line.item_id].margin_amount += line.margin_amount
+        return acc
+      }, {}),
+  )
+    .map((g) => ({ ...g, margin_rate: rateOf(g.margin_amount, g.sales_amount) }))
+    .sort((a, b) => b.margin_amount - a.margin_amount)
+
+  const groups: (MarginPartnerGroup | MarginItemGroup)[] =
+    groupBy === "PARTNER" ? partnerGroups : itemGroups
+
+  const labelOf = (g: MarginPartnerGroup | MarginItemGroup) =>
+    "partner_name" in g ? g.partner_name : g.item_name
+
+  const chartData = groups.slice(0, 8).map((g) => ({
+    name: labelOf(g).length > 8 ? `${labelOf(g).slice(0, 8)}…` : labelOf(g),
+    full: labelOf(g),
+    sales: g.sales_amount,
+    margin: g.margin_amount,
+    rate: g.margin_rate,
+  }))
+
+  const compact = (n: number) =>
+    n >= 100_000_000 ? `${(n / 100_000_000).toFixed(1)}억` : n >= 10_000 ? `${Math.round(n / 10_000)}만` : `${n}`
 
   return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between flex-wrap gap-4">
+      <div className="space-y-5">
         <div>
-          <h2 className="font-semibold text-lg" style={{ color: "#1a1a1a" }}>매입 · 매출 · 마진 관리</h2>
-          <p className="text-sm mt-0.5" style={{ color: "#888" }}>5개 카테고리 · 25개 품목 기준 마진 집계 및 분석</p>
+          <h2 className="font-semibold text-lg" style={{ color: "#1a1a1a" }}>마진 분석</h2>
+          <p className="text-sm mt-0.5" style={{ color: "#888" }}>
+            기간별 전체 마진과 거래처별·상품별 마진 집계 · 매출일(sale_date) 기준
+          </p>
         </div>
-        <div className="flex gap-1 p-1 rounded-lg" style={{ background: "#F0F2F5" }}>
-          {["3개월", "6개월", "1년"].map((p) => (
-            <button key={p} onClick={() => setPeriod(p)} className="px-4 py-1.5 text-sm font-medium rounded-md transition-all duration-150"
-              style={{ background: period === p ? "white" : "transparent", color: period === p ? "#0B3D91" : "#888", boxShadow: period === p ? "0 1px 4px rgba(0,0,0,0.08)" : "none" }}>
-              {p}
-            </button>
-          ))}
-        </div>
-      </div>
 
-      {/* KPI */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {[
-          { label: "이번달 매출", value: `₩${fmt(latest.sales)}`,    delta: "+6.6%",            color: "#0B3D91" },
-          { label: "이번달 매입", value: `₩${fmt(latest.purchase)}`, delta: "+2.5%",            color: "#1677FF" },
-          { label: "이번달 마진", value: `₩${fmt(latest.margin)}`,   delta: `+${marginGrowth}%`, color: "#059669" },
-          { label: "마진율",      value: `${latest.marginRate}%`,     delta: "+1.2%p",           color: "#7C3AED" },
-        ].map((k) => (
-          <div key={k.label} className="bg-white p-5" style={{ borderRadius: 8, border: "1px solid #E5EAF0" }}>
-            <p className="text-xs font-medium mb-3" style={{ color: "#888" }}>{k.label}</p>
-            <p className="font-bold text-2xl mb-2" style={{ color: "#1a1a1a", fontFamily: "'Inter', sans-serif" }}>{k.value}</p>
-            <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: "#DCFCE7", color: "#166534" }}>
-              {k.delta} 전월比
-            </span>
-          </div>
-        ))}
-      </div>
+        {/* 기간 · 집계 기준 */}
+        <div className="flex flex-wrap items-center gap-2">
+          <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="px-3 py-1.5 text-xs outline-none" style={{ border: "1px solid #E5EAF0", borderRadius: 7, background: "white" }} />
+          <span className="text-xs" style={{ color: "#999" }}>~</span>
+          <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="px-3 py-1.5 text-xs outline-none" style={{ border: "1px solid #E5EAF0", borderRadius: 7, background: "white" }} />
 
-      {/* Tabs */}
-      <div style={{ borderBottom: "1px solid #E5EAF0" }}>
-        <div className="flex gap-6">
-          {tabs.map((t) => (
-            <button key={t.key} onClick={() => setTab(t.key)} className="pb-3 text-sm font-medium transition-all duration-150"
-              style={{ color: tab === t.key ? "#0B3D91" : "#888", borderBottom: tab === t.key ? "2px solid #0B3D91" : "2px solid transparent", marginBottom: -1 }}>
-              {t.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* ── OVERVIEW ── */}
-      {tab === "overview" && (
-        <div className="space-y-5">
-          <div className="bg-white p-6" style={{ borderRadius: 8, border: "1px solid #E5EAF0" }}>
-            <p className="font-semibold text-sm mb-1" style={{ color: "#1a1a1a" }}>월별 매출 / 매입 / 마진</p>
-            <p className="text-xs mb-6" style={{ color: "#999" }}>최근 6개월 집계</p>
-            <ResponsiveContainer width="100%" height={280}>
-              <BarChart data={monthlyData} barCategoryGap="35%">
-                <CartesianGrid strokeDasharray="3 3" stroke="#F0F0F0" vertical={false} />
-                <XAxis dataKey="month" tick={{ fontSize: 12, fill: "#999" }} axisLine={false} tickLine={false} />
-                <YAxis tickFormatter={(v) => fmt(v)} tick={{ fontSize: 11, fill: "#999" }} axisLine={false} tickLine={false} />
-                <Tooltip content={<CustomTooltip />} />
-                <Legend iconType="square" iconSize={8} wrapperStyle={{ fontSize: 12, paddingTop: 12 }} />
-                <Bar dataKey="sales"    name="매출" fill="#0B3D91" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="purchase" name="매입" fill="#93C5FD" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="margin"   name="마진" fill="#059669" radius={[3, 3, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+          <div className="ml-4 flex gap-1 p-1 rounded-lg" style={{ background: "#F0F2F5" }}>
+            {MARGIN_GROUP_BY.map((g) => (
+                <button
+                    key={g}
+                    onClick={() => setGroupBy(g)}
+                    className="px-4 py-1.5 text-sm font-medium rounded-md transition-all duration-150"
+                    style={{
+                      background: groupBy === g ? "white" : "transparent",
+                      color: groupBy === g ? "#0B3D91" : "#888",
+                      boxShadow: groupBy === g ? "0 1px 4px rgba(0,0,0,0.08)" : "none",
+                    }}
+                >
+                  {g === "PARTNER" ? "거래처별" : "상품별"}
+                </button>
+            ))}
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            <div className="bg-white p-6" style={{ borderRadius: 8, border: "1px solid #E5EAF0" }}>
-              <p className="font-semibold text-sm mb-1" style={{ color: "#1a1a1a" }}>월별 마진율 추이 (%)</p>
-              <p className="text-xs mb-4" style={{ color: "#999" }}>전 카테고리 합산</p>
-              <ResponsiveContainer width="100%" height={200}>
-                <LineChart data={monthlyData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#F0F0F0" />
-                  <XAxis dataKey="month" tick={{ fontSize: 12, fill: "#999" }} axisLine={false} tickLine={false} />
-                  <YAxis domain={[25, 40]} tickFormatter={(v) => `${v}%`} tick={{ fontSize: 11, fill: "#999" }} axisLine={false} tickLine={false} />
-                  <Tooltip formatter={(v) => [`${Number(v ?? 0)}%`, "마진율"]} contentStyle={{ fontSize: 12, borderRadius: 6, border: "1px solid #E5EAF0" }} />
-                  <Line type="monotone" dataKey="marginRate" stroke="#7C3AED" strokeWidth={2.5} dot={{ r: 4, fill: "#7C3AED" }} />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
+          <span className="ml-auto text-xs" style={{ color: "#999" }}>
+            {formatDate(startDate)} ~ {formatDate(endDate)} · 매출 {inRange.length}건
+          </span>
+        </div>
 
-            <div className="bg-white p-6" style={{ borderRadius: 8, border: "1px solid #E5EAF0" }}>
-              <p className="font-semibold text-sm mb-1" style={{ color: "#1a1a1a" }}>카테고리별 마진 비중</p>
-              <p className="text-xs mb-3" style={{ color: "#999" }}>5개 카테고리 기준</p>
-              <div className="flex items-center gap-4">
-                <ResponsiveContainer width="100%" height={180}>
-                  <PieChart>
-                    <Pie data={pieCategoryData} cx="50%" cy="50%" innerRadius={48} outerRadius={76} paddingAngle={3} dataKey="value">
-                      {pieCategoryData.map((entry, index) => <Cell key={index} fill={entry.color} />)}
-                    </Pie>
-                    <Tooltip formatter={(v, name) => [`${Number(v ?? 0)}%`, name]} contentStyle={{ fontSize: 11, borderRadius: 6, border: "1px solid #E5EAF0" }} />
-                  </PieChart>
+        {invalidRange && (
+            <p className="px-4 py-2.5 text-sm" style={{ background: "#FEF2F2", color: "#DC2626", borderRadius: 6 }}>
+              시작일이 종료일보다 늦습니다. 기간을 다시 선택해 주세요.
+            </p>
+        )}
+
+        {/* 전체 요약 */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {[
+            { label: "매출액", value: formatMoney(summary.sales_amount), color: "#0B3D91" },
+            { label: "매출원가", value: formatMoney(summary.cost_amount), color: "#1677FF" },
+            { label: "마진", value: formatMoney(summary.margin_amount), color: "#059669" },
+            { label: "마진율", value: formatRate(summary.margin_rate), color: "#C2410C" },
+          ].map((s) => (
+              <div key={s.label} className="bg-white px-4 py-4" style={{ borderRadius: 8, border: "1px solid #E5EAF0" }}>
+                <p className="text-xs" style={{ color: "#999" }}>{s.label}</p>
+                <p className="text-xl font-bold mt-1" style={{ color: s.color, fontFamily: "'Inter', sans-serif" }}>{s.value}</p>
+              </div>
+          ))}
+        </div>
+
+        {/* 집계 차트 */}
+        {chartData.length > 0 && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div className="bg-white p-6" style={{ borderRadius: 8, border: "1px solid #E5EAF0" }}>
+                <p className="font-semibold text-sm mb-1" style={{ color: "#1a1a1a" }}>
+                  {groupBy === "PARTNER" ? "거래처별" : "상품별"} 매출 / 마진
+                </p>
+                <p className="text-xs mb-5" style={{ color: "#999" }}>마진 상위 {chartData.length}개</p>
+                <ResponsiveContainer width="100%" height={260}>
+                  <BarChart data={chartData} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#F0F0F0" vertical={false} />
+                    <XAxis dataKey="name" tick={{ fontSize: 10, fill: "#999" }} axisLine={false} tickLine={false} interval={0} angle={-20} textAnchor="end" height={50} />
+                    <YAxis tickFormatter={(v) => compact(Number(v))} tick={{ fontSize: 11, fill: "#999" }} axisLine={false} tickLine={false} />
+                    <Tooltip
+                        formatter={(value, name) => [formatMoney(Number(value ?? 0)), name === "sales" ? "매출" : "마진"]}
+                        labelFormatter={(_, payload) => payload?.[0]?.payload?.full ?? ""}
+                        contentStyle={{ fontSize: 12, borderRadius: 6, border: "1px solid #E5EAF0" }}
+                    />
+                    <Bar dataKey="sales" name="sales" fill="#CBD5E1" radius={[3, 3, 0, 0]} />
+                    <Bar dataKey="margin" name="margin" fill="#0B3D91" radius={[3, 3, 0, 0]} />
+                  </BarChart>
                 </ResponsiveContainer>
-                <div className="space-y-2 shrink-0 text-xs">
-                  {pieCategoryData.map((d) => (
-                    <div key={d.name} className="flex items-center gap-2">
-                      <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: d.color }} />
-                      <span style={{ color: "#555", maxWidth: 110 }}>{d.name.length > 10 ? d.name.slice(0, 10) + "…" : d.name}</span>
-                      <span className="font-semibold ml-auto" style={{ color: "#333" }}>{d.value}%</span>
-                    </div>
-                  ))}
-                </div>
+              </div>
+
+              <div className="bg-white p-6" style={{ borderRadius: 8, border: "1px solid #E5EAF0" }}>
+                <p className="font-semibold text-sm mb-1" style={{ color: "#1a1a1a" }}>마진율 비교</p>
+                <p className="text-xs mb-5" style={{ color: "#999" }}>SUM(마진) ÷ SUM(매출) × 100</p>
+                <ResponsiveContainer width="100%" height={260}>
+                  <BarChart data={chartData} layout="vertical" margin={{ top: 4, right: 16, bottom: 0, left: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#F0F0F0" horizontal={false} />
+                    <XAxis type="number" tickFormatter={(v) => `${v}%`} tick={{ fontSize: 11, fill: "#999" }} axisLine={false} tickLine={false} />
+                    <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: "#666" }} axisLine={false} tickLine={false} width={80} />
+                    <Tooltip
+                        formatter={(value) => [`${Number(value ?? 0).toFixed(2)}%`, "마진율"]}
+                        labelFormatter={(_, payload) => payload?.[0]?.payload?.full ?? ""}
+                        contentStyle={{ fontSize: 12, borderRadius: 6, border: "1px solid #E5EAF0" }}
+                    />
+                    <Bar dataKey="rate" radius={[0, 3, 3, 0]}>
+                      {chartData.map((_, i) => (
+                          <Cell key={i} fill={BAR_COLORS[i % BAR_COLORS.length]} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
               </div>
             </div>
-          </div>
+        )}
 
-          <div className="bg-white p-6" style={{ borderRadius: 8, border: "1px solid #E5EAF0" }}>
-            <p className="font-semibold text-sm mb-1" style={{ color: "#1a1a1a" }}>누적 마진 추이</p>
-            <p className="text-xs mb-5" style={{ color: "#999" }}>6개월 누적 합산</p>
-            <ResponsiveContainer width="100%" height={200}>
-              <AreaChart data={monthlyData.map((d, i) => ({ month: d.month, cumMargin: monthlyData.slice(0, i + 1).reduce((s, x) => s + x.margin, 0) }))}>
-                <defs>
-                  <linearGradient id="cumGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%"  stopColor="#059669" stopOpacity={0.18} />
-                    <stop offset="95%" stopColor="#059669" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#F0F0F0" />
-                <XAxis dataKey="month" tick={{ fontSize: 12, fill: "#999" }} axisLine={false} tickLine={false} />
-                <YAxis tickFormatter={(v) => fmt(v)} tick={{ fontSize: 11, fill: "#999" }} axisLine={false} tickLine={false} />
-                <Tooltip formatter={(v) => [`₩${Number(v ?? 0).toLocaleString()}`, "누적 마진"]} contentStyle={{ fontSize: 12, borderRadius: 6, border: "1px solid #E5EAF0" }} />
-                <Area type="monotone" dataKey="cumMargin" stroke="#059669" strokeWidth={2} fill="url(#cumGrad)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      )}
-
-      {/* ── PARTNER TAB ── */}
-      {tab === "partner" && (
-        <div className="space-y-5">
-          <div className="bg-white p-6" style={{ borderRadius: 8, border: "1px solid #E5EAF0" }}>
-            <p className="font-semibold text-sm mb-5" style={{ color: "#1a1a1a" }}>거래처별 매출 / 마진</p>
-            <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={byPartnerData} layout="vertical" margin={{ top: 4, right: 20, bottom: 0, left: 90 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#F0F0F0" horizontal={false} />
-                <XAxis type="number" tickFormatter={(v) => fmt(v)} tick={{ fontSize: 11, fill: "#999" }} axisLine={false} tickLine={false} />
-                <YAxis type="category" dataKey="name" tick={{ fontSize: 12, fill: "#555" }} axisLine={false} tickLine={false} />
-                <Tooltip content={<CustomTooltip />} />
-                <Legend iconType="square" iconSize={8} wrapperStyle={{ fontSize: 12, paddingTop: 12 }} />
-                <Bar dataKey="sales"  name="매출" fill="#0B3D91" radius={[0, 3, 3, 0]} />
-                <Bar dataKey="margin" name="마진" fill="#059669" radius={[0, 3, 3, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="bg-white" style={{ borderRadius: 8, border: "1px solid #E5EAF0" }}>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr style={{ background: "#F7F9FC", borderBottom: "1px solid #E5EAF0" }}>
-                    {["거래처", "매출", "매입", "마진", "마진율"].map((h) => (
-                      <th key={h} className="px-6 py-3 text-left font-medium" style={{ color: "#888", fontSize: 12 }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {byPartnerData.map((p, i) => {
-                    const mRate = ((p.margin / p.sales) * 100).toFixed(1)
-                    return (
-                      <tr key={p.name} style={{ borderTop: i > 0 ? "1px solid #F3F4F6" : "none" }}>
-                        <td className="px-6 py-4 font-medium" style={{ color: "#1a1a1a" }}>{p.name}</td>
-                        <td className="px-6 py-4" style={{ fontFamily: "'Inter', sans-serif", color: "#0B3D91" }}>₩{p.sales.toLocaleString()}</td>
-                        <td className="px-6 py-4" style={{ fontFamily: "'Inter', sans-serif", color: "#555" }}>₩{p.purchase.toLocaleString()}</td>
-                        <td className="px-6 py-4 font-semibold" style={{ fontFamily: "'Inter', sans-serif", color: "#059669" }}>₩{p.margin.toLocaleString()}</td>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-3">
-                            <span className="font-semibold text-sm" style={{ color: "#7C3AED", fontFamily: "'Inter', sans-serif" }}>{mRate}%</span>
-                            <div className="flex-1 rounded-full overflow-hidden" style={{ height: 4, background: "#F3F4F6", maxWidth: 80 }}>
-                              <div className="h-full rounded-full" style={{ width: `${mRate}%`, background: "#7C3AED" }} />
-                            </div>
-                          </div>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── PRODUCT TAB ── */}
-      {tab === "product" && (
-        <div className="space-y-5">
-          <div className="bg-white p-6" style={{ borderRadius: 8, border: "1px solid #E5EAF0" }}>
-            <p className="font-semibold text-sm mb-5" style={{ color: "#1a1a1a" }}>상품별 마진 비교 (TOP 8)</p>
-            <ResponsiveContainer width="100%" height={280}>
-              <BarChart data={byProductData} margin={{ top: 4, right: 4, bottom: 40, left: 0 }} barCategoryGap="40%">
-                <CartesianGrid strokeDasharray="3 3" stroke="#F0F0F0" vertical={false} />
-                <XAxis dataKey="name" tick={{ fontSize: 10, fill: "#999" }} axisLine={false} tickLine={false} angle={-20} textAnchor="end" interval={0} />
-                <YAxis tickFormatter={(v) => fmt(v)} tick={{ fontSize: 11, fill: "#999" }} axisLine={false} tickLine={false} />
-                <Tooltip content={<CustomTooltip />} />
-                <Legend iconType="square" iconSize={8} wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />
-                <Bar dataKey="sales"  name="매출" fill="#0B3D91" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="margin" name="마진" fill="#059669" radius={[3, 3, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="bg-white" style={{ borderRadius: 8, border: "1px solid #E5EAF0" }}>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr style={{ background: "#F7F9FC", borderBottom: "1px solid #E5EAF0" }}>
-                    {["제품명", "카테고리", "대표 용도", "매출", "매입원가", "마진", "마진율"].map((h) => (
-                      <th key={h} className="px-5 py-3 text-left font-medium" style={{ color: "#888", fontSize: 12, whiteSpace: "nowrap" }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {byProductData.map((p, i) => {
-                    const c = CATEGORY_COLORS[p.category]
-                    return (
-                      <tr key={p.name} style={{ borderTop: i > 0 ? "1px solid #F3F4F6" : "none" }}
-                        onMouseEnter={(e) => (e.currentTarget.style.background = "#FAFAFA")}
-                        onMouseLeave={(e) => (e.currentTarget.style.background = "white")}>
-                        <td className="px-5 py-3 font-semibold text-sm" style={{ color: "#1a1a1a", whiteSpace: "nowrap" }}>{p.name}</td>
-                        <td className="px-5 py-3">
-                          <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: c.bg, color: c.color }}>{p.category}</span>
-                        </td>
-                        <td className="px-5 py-3 text-xs" style={{ color: "#888" }}>{p.indication}</td>
-                        <td className="px-5 py-3 text-sm" style={{ fontFamily: "'Inter', sans-serif", color: "#0B3D91" }}>₩{p.sales.toLocaleString()}</td>
-                        <td className="px-5 py-3 text-sm" style={{ fontFamily: "'Inter', sans-serif", color: "#555" }}>₩{p.purchase.toLocaleString()}</td>
-                        <td className="px-5 py-3 font-semibold text-sm" style={{ fontFamily: "'Inter', sans-serif", color: "#059669" }}>₩{p.margin.toLocaleString()}</td>
-                        <td className="px-5 py-3">
-                          <div className="flex items-center gap-3">
-                            <span className="font-semibold text-sm" style={{ color: "#7C3AED", fontFamily: "'Inter', sans-serif" }}>{p.marginRate}%</span>
-                            <div className="flex-1 rounded-full overflow-hidden" style={{ height: 4, background: "#F3F4F6", maxWidth: 70 }}>
-                              <div className="h-full rounded-full" style={{ width: `${p.marginRate}%`, background: "#7C3AED" }} />
-                            </div>
-                          </div>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── TRANSACTIONS TAB ── */}
-      {tab === "transactions" && (
+        {/* 집계 표 */}
         <div className="bg-white" style={{ borderRadius: 8, border: "1px solid #E5EAF0" }}>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr style={{ background: "#F7F9FC", borderBottom: "1px solid #E5EAF0" }}>
-                  {["거래ID", "날짜", "구분", "거래처", "제품명", "카테고리", "대표 용도", "수량", "원가", "판매단가", "마진(건별)"].map((h) => (
-                    <th key={h} className="px-4 py-3 text-left font-medium" style={{ color: "#888", fontSize: 12, whiteSpace: "nowrap" }}>{h}</th>
-                  ))}
-                </tr>
+              <tr style={{ background: "#F7F9FC", borderBottom: "1px solid #E5EAF0" }}>
+                {[groupBy === "PARTNER" ? "거래처" : "상품", "매출액", "매출원가", "마진", "마진율", "비중"].map((h) => (
+                    <th key={h} className="px-5 py-3 text-left font-medium" style={{ color: "#888", fontSize: 12, whiteSpace: "nowrap" }}>{h}</th>
+                ))}
+              </tr>
               </thead>
               <tbody>
-                {TRANSACTIONS.map((t, i) => {
-                  const c = CATEGORY_COLORS[t.category] ?? CATEGORY_COLORS["기타"]
-                  return (
-                    <tr key={t.id} style={{ borderTop: i > 0 ? "1px solid #F3F4F6" : "none" }}
-                      onMouseEnter={(e) => (e.currentTarget.style.background = "#FAFAFA")}
-                      onMouseLeave={(e) => (e.currentTarget.style.background = "white")}>
-                      <td className="px-4 py-3 text-xs" style={{ color: "#bbb", fontFamily: "'Inter', sans-serif" }}>{t.id}</td>
-                      <td className="px-4 py-3 text-xs" style={{ color: "#999" }}>{t.date}</td>
-                      <td className="px-4 py-3">
-                        <span className="text-xs font-semibold px-2.5 py-1 rounded-full"
-                          style={t.type === "매출" ? { background: "#EFF6FF", color: "#1D4ED8" } : { background: "#FFF7ED", color: "#9A3412" }}>
-                          {t.type}
+              {groups.map((g, i) => {
+                const share = summary.margin_amount === 0 ? 0 : (g.margin_amount / summary.margin_amount) * 100
+                const key = "partner_id" in g ? `p${g.partner_id}` : `i${g.item_id}`
+                return (
+                    <tr key={key} style={{ borderTop: i > 0 ? "1px solid #F3F4F6" : "none" }}>
+                      <td className="px-5 py-4">
+                        <p className="font-medium" style={{ color: "#1a1a1a" }}>{labelOf(g)}</p>
+                        {"item_code" in g && <p className="font-mono text-xs" style={{ color: "#aaa" }}>{g.item_code}</p>}
+                      </td>
+                      <td className="px-5 py-4" style={{ color: "#333", fontFamily: "'Inter', sans-serif" }}>{formatMoney(g.sales_amount)}</td>
+                      <td className="px-5 py-4 text-sm" style={{ color: "#777", fontFamily: "'Inter', sans-serif" }}>{formatMoney(g.cost_amount)}</td>
+                      <td className="px-5 py-4 font-medium" style={{ color: "#059669", fontFamily: "'Inter', sans-serif" }}>{formatMoney(g.margin_amount)}</td>
+                      <td className="px-5 py-4">
+                        <span className="text-xs font-medium px-2 py-0.5 rounded-full" style={{ background: "#ECFDF5", color: "#047857" }}>
+                          {formatRate(g.margin_rate)}
                         </span>
                       </td>
-                      <td className="px-4 py-3 font-medium text-sm" style={{ color: "#1a1a1a" }}>{t.partner}</td>
-                      <td className="px-4 py-3 font-medium text-sm" style={{ color: "#1a1a1a", whiteSpace: "nowrap" }}>{t.productName}</td>
-                      <td className="px-4 py-3">
-                        <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: c.bg, color: c.color }}>
-                          {t.category.length > 8 ? t.category.slice(0, 8) + "…" : t.category}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-xs" style={{ color: "#888" }}>{t.indication}</td>
-                      <td className="px-4 py-3 text-sm" style={{ fontFamily: "'Inter', sans-serif", color: "#555" }}>{t.qty.toLocaleString()}</td>
-                      <td className="px-4 py-3 text-sm" style={{ fontFamily: "'Inter', sans-serif", color: "#777" }}>₩{t.unitCost.toLocaleString()}</td>
-                      <td className="px-4 py-3 text-sm" style={{ fontFamily: "'Inter', sans-serif", color: "#0B3D91" }}>
-                        {t.unitSale > 0 ? `₩${t.unitSale.toLocaleString()}` : "-"}
-                      </td>
-                      <td className="px-4 py-3 font-semibold text-sm" style={{ fontFamily: "'Inter', sans-serif", color: t.margin > 0 ? "#059669" : "#888" }}>
-                        {t.margin > 0 ? `₩${t.margin.toLocaleString()}` : "-"}
+                      <td className="px-5 py-4" style={{ minWidth: 140 }}>
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 rounded-full overflow-hidden" style={{ height: 5, background: "#F3F4F6" }}>
+                            <div className="h-full rounded-full" style={{ width: `${Math.min(share, 100)}%`, background: BAR_COLORS[i % BAR_COLORS.length] }} />
+                          </div>
+                          <span className="text-xs shrink-0" style={{ color: "#999", fontFamily: "'Inter', sans-serif" }}>{share.toFixed(1)}%</span>
+                        </div>
                       </td>
                     </tr>
-                  )
-                })}
+                )
+              })}
               </tbody>
             </table>
           </div>
+          {groups.length === 0 && (
+              <div className="py-14 text-center text-sm" style={{ color: "#999" }}>
+                해당 기간에 집계할 매출이 없습니다. 매출은 납품 완료 시 생성됩니다.
+              </div>
+          )}
         </div>
-      )}
-    </div>
+
+        <p className="text-xs" style={{ color: "#aaa" }}>
+          상품별 집계는 매출에 연결된 주문 라인의 스냅샷 단가로 계산합니다. 등록된 상품 {ITEMS.length}개 중 해당 기간에 판매된 품목만 표시됩니다.
+        </p>
+      </div>
   )
 }

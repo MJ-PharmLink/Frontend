@@ -1,7 +1,7 @@
 import { useState } from "react"
-import { CATEGORY_COLORS } from "../data/products"
-import { ITEM_UNITS, formatMoney, formatNumber, itemCodePrefix } from "../lib/domain"
-import type { Category, Item } from "../types/api"
+import { CATEGORIES, ITEMS as SAMPLE_ITEMS, SUPPLIERS } from "../data/sample"
+import { CATEGORY_COLORS, ITEM_UNITS, formatMoney, formatNumber, itemCodePrefix } from "../lib/domain"
+import type { Item } from "../types/api"
 
 /**
  * 6. 상품(의약품) 마스터.
@@ -10,36 +10,11 @@ import type { Category, Item } from "../types/api"
  * 상품을 등록하면 서버가 기본 창고에 수량 0인 재고 레코드를 함께 만든다(6.3).
  */
 
-/** 6.5 카테고리 — DB 설계서 9. 초기 데이터(KPIC 약효 분류 5종) */
-const CATEGORIES: Category[] = [
-  { category_id: 1, category_name: "감염성질환 및 호흡기계", description: "감기, 알레르기, 객담, 코막힘, 인후염 등", created_at: "2026-09-01T09:00:00Z" },
-  { category_id: 2, category_name: "소화기계 및 순환기계", description: "소화불량, 위산과다, 설사, 변비, 치질 등", created_at: "2026-09-01T09:00:00Z" },
-  { category_id: 3, category_name: "신경계 및 정신/행동장애", description: "해열, 진통, 두통, 생리통 등", created_at: "2026-09-01T09:00:00Z" },
-  { category_id: 4, category_name: "호르몬 및 대사성 의약품", description: "당뇨, 갑상선, 호르몬 조절 등", created_at: "2026-09-01T09:00:00Z" },
-  { category_id: 5, category_name: "기타", description: "외용제, 의약외품 등", created_at: "2026-09-01T09:00:00Z" },
-]
+/** 공급처는 5.1 거래처 목록에서 partner_type=SUPPLIER 로 조회한 결과를 쓴다 */
+const ACTIVE_SUPPLIERS = SUPPLIERS.filter((s) => s.is_active)
 
-/** 공급처 — 5.1 거래처 목록에서 partner_type=SUPPLIER 로 조회한 결과에 해당 */
-const SUPPLIERS = [
-  { supplier_id: 13, supplier_name: "아진바이오" },
-  { supplier_id: 14, supplier_name: "메디코어제약" },
-  { supplier_id: 15, supplier_name: "세움파마" },
-  { supplier_id: 16, supplier_name: "한결제약" },
-  { supplier_id: 17, supplier_name: "이노젠파마" },
-  { supplier_id: 19, supplier_name: "그린셀제약" },
-  { supplier_id: 21, supplier_name: "유니랩제약" },
-]
+const ITEMS = SAMPLE_ITEMS
 
-const ITEMS: Item[] = [
-  { item_id: 101, item_code: "IT-MED-RI-0001", item_name: "아목시실린 캡슐 500mg", category_id: 1, category_name: "감염성질환 및 호흡기계", spec: "500mg x 10캡슐", unit: "캡슐", unit_cost: 8500, unit_price: 13500, safety_stock: 100, supplier_id: 21, supplier_name: "유니랩제약", is_active: true },
-  { item_id: 102, item_code: "IT-MED-RI-0002", item_name: "세프라딘 정 500mg", category_id: 1, category_name: "감염성질환 및 호흡기계", spec: "100정/PTP", unit: "정", unit_cost: 12000, unit_price: 18000, safety_stock: 100, supplier_id: 16, supplier_name: "한결제약", is_active: true },
-  { item_id: 201, item_code: "IT-MED-GC-0001", item_name: "아제스틴 정", category_id: 2, category_name: "소화기계 및 순환기계", spec: "500정/병", unit: "병", unit_cost: 15000, unit_price: 22000, safety_stock: 80, supplier_id: 14, supplier_name: "메디코어제약", is_active: true },
-  { item_id: 202, item_code: "IT-MED-GC-0002", item_name: "암로디핀 베실산염 5mg", category_id: 2, category_name: "소화기계 및 순환기계", spec: "30정/PTP", unit: "정", unit_cost: 4200, unit_price: 6800, safety_stock: 150, supplier_id: 15, supplier_name: "세움파마", is_active: true },
-  { item_id: 301, item_code: "IT-MED-NP-0001", item_name: "뉴로펜 서방정 300mg", category_id: 3, category_name: "신경계 및 정신/행동장애", spec: "100정/병", unit: "정", unit_cost: 18000, unit_price: 27000, safety_stock: 50, supplier_id: 19, supplier_name: "그린셀제약", is_active: true },
-  { item_id: 401, item_code: "IT-MED-EM-0001", item_name: "메트포르민 염산염 500mg", category_id: 4, category_name: "호르몬 및 대사성 의약품", spec: "100정/PTP", unit: "정", unit_cost: 3500, unit_price: 5500, safety_stock: 200, supplier_id: 17, supplier_name: "이노젠파마", is_active: true },
-  { item_id: 501, item_code: "IT-MED-OT-0001", item_name: "쿨렉스파스", category_id: 5, category_name: "기타", spec: "6매/봉", unit: "개", unit_cost: 2400, unit_price: 4200, safety_stock: 100, supplier_id: 13, supplier_name: "아진바이오", is_active: true },
-  { item_id: 502, item_code: "IT-MED-OT-0002", item_name: "메디컬 소독용 에탄올 500mL", category_id: 5, category_name: "기타", spec: "500mL", unit: "병", unit_cost: 1800, unit_price: 3200, safety_stock: 60, supplier_id: 13, supplier_name: "아진바이오", is_active: false },
-]
 
 const onlyDigits = (value: string) => value.replace(/\D/g, "")
 
@@ -47,7 +22,7 @@ const EMPTY_FORM = {
   item_name: "",
   category_id: CATEGORIES[0].category_id,
   code_number: "0001",
-  supplier_id: SUPPLIERS[0].supplier_id,
+  supplier_id: ACTIVE_SUPPLIERS[0].partner_id,
   spec: "",
   unit_qty: 1,
   unit: ITEM_UNITS[0] as string,
@@ -184,7 +159,7 @@ export function ProductPage() {
 
   const handleSave = () => {
     const category = CATEGORIES.find((c) => c.category_id === form.category_id)
-    const supplier = SUPPLIERS.find((s) => s.supplier_id === form.supplier_id)
+    const supplier = ACTIVE_SUPPLIERS.find((s) => s.partner_id === form.supplier_id)
     const newItem: Item = {
       item_id: Math.max(0, ...items.map((p) => p.item_id)) + 1,
       item_code: `${codePrefix}${form.code_number.padStart(4, "0")}`,
@@ -198,7 +173,7 @@ export function ProductPage() {
       unit_price: form.unit_price,
       safety_stock: form.safety_stock,
       supplier_id: form.supplier_id,
-      supplier_name: supplier?.supplier_name ?? "-",
+      supplier_name: supplier?.name ?? "-",
       is_active: true,
     }
     setItems((prev) => [...prev, newItem])
@@ -415,8 +390,8 @@ export function ProductPage() {
                         onChange={(e) => update("supplier_id", Number(e.target.value))}
                         className={selectClass}
                     >
-                      {SUPPLIERS.map((s) => (
-                          <option key={s.supplier_id} value={s.supplier_id}>{s.supplier_name}</option>
+                      {ACTIVE_SUPPLIERS.map((s) => (
+                          <option key={s.partner_id} value={s.partner_id}>{s.name}</option>
                       ))}
                     </select>
                   </Field>

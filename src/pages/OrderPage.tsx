@@ -1,85 +1,167 @@
 import { useState } from "react"
-import { PRODUCTS, CATEGORIES } from "../data/products"
 import type { AuthUser } from "../App"
+import { CUSTOMERS, DELIVERIES, ITEMS, ORDERS, TODAY, itemOf } from "../data/sample"
+import {
+  DELIVERY_STATUS_LABELS,
+  DELIVERY_STATUS_TONES,
+  ORDER_STATUS_LABELS,
+  ORDER_STATUS_TONES,
+  formatDate,
+  formatDateTime,
+  formatMoney,
+  formatNumber,
+} from "../lib/domain"
+import { ORDER_STATUSES } from "../types/api"
+import type { OrderDetail, OrderItem, OrderStatus } from "../types/api"
 
-interface Order {
-  id: string
-  date: string
-  partner: string
-  productCode: string
-  productName: string
-  category: string
-  indication: string
-  qty: number
-  unitPrice: number
-  status: "대기" | "출고완료" | "납품완료" | "취소" | "환불"
-  manager: string
+/**
+ * 8. 주문 — 관리자·영업 전용.
+ *
+ * 주문 상태는 PENDING → APPROVED / CANCELLED 세 가지뿐이다. 출고·납품 진행은
+ * 별도 리소스(9. 납품)이므로 여기서는 연결된 납품 상태를 읽기만 한다.
+ * 재고는 등록이 아니라 승인(8.4) 시점에 FEFO로 차감된다.
+ */
+
+interface Props {
+  user: AuthUser
 }
 
-const ORDERS: Order[] = [
-  { id: "ORD-20260911-001", date: "2026.09.11", partner: "새봄약국",     productCode: "INF-001", productName: "클리어숨콜드캡슐",    category: "감염성질환 및 호흡기계",  indication: "종합 감기 증상",       qty: 500,  unitPrice: 7500,  status: "납품완료", manager: "이영업" },
-  { id: "ORD-20260911-002", date: "2026.09.11", partner: "라온종합병원", productCode: "NEU-001", productName: "페인제로정 500mg",       category: "신경계 및 정신/행동장애", indication: "두통·발열·각종 통증",  qty: 1200, unitPrice: 3200,  status: "출고완료", manager: "이영업" },
-  { id: "ORD-20260910-003", date: "2026.09.10", partner: "다온메디유통",   productCode: "DIG-001", productName: "다이제온정",               category: "소화기계 및 순환기계",   indication: "소화불량·과식",        qty: 800,  unitPrice: 5900,  status: "대기",     manager: "이영업" },
-  { id: "ORD-20260910-004", date: "2026.09.10", partner: "푸른길약국",     productCode: "HOR-001", productName: "에너지밸런스정",         category: "호르몬 및 대사성 의약품", indication: "피로 시 비타민 B군 보급", qty: 300, unitPrice: 12500, status: "납품완료", manager: "이영업" },
-  { id: "ORD-20260909-005", date: "2026.09.09", partner: "한빛대학병원", productCode: "NEU-002", productName: "이지케어이브연질캡슐", category: "신경계 및 정신/행동장애", indication: "생리통·염증성 통증",  qty: 200,  unitPrice: 4500,  status: "취소", manager: "이영업" },
-  { id: "ORD-20260909-006", date: "2026.09.09", partner: "케이메드유통", productCode: "ETC-001", productName: "스킨가드연고",             category: "기타",                   indication: "세균성 피부감염",      qty: 400,  unitPrice: 6200,  status: "출고완료", manager: "이영업" },
-  { id: "ORD-20260908-007", date: "2026.09.08", partner: "별하약국",     productCode: "INF-002", productName: "알러쉴드정",               category: "감염성질환 및 호흡기계",  indication: "알레르기성 비염",      qty: 150,  unitPrice: 9800,  status: "납품완료", manager: "이영업" },
-  { id: "ORD-20260908-008", date: "2026.09.08", partner: "유니온헬스유통", productCode: "ETC-005", productName: "쿨렉스파스",       category: "기타",                   indication: "근육통·관절통·삠",    qty: 600,  unitPrice: 4200,  status: "환불", manager: "이영업" },
-]
-
-const STATUS_FLOW: Record<Order["status"], Order["status"] | null> = {
-  "대기": "출고완료",
-  "출고완료": "납품완료",
-  "납품완료": null,
-  "취소": null,
-  "환불": null,
+interface DraftLine {
+  item_id: number
+  quantity: number
 }
-
-const statusColors: Record<string, { bg: string; color: string }> = {
-  "대기":     { bg: "#FEF9C3", color: "#92400E" },
-  "출고완료": { bg: "#DBEAFE", color: "#1D4ED8" },
-  "납품완료": { bg: "#DCFCE7", color: "#166534" },
-  "취소":     { bg: "#F3F4F6", color: "#6B7280" },
-  "환불":     { bg: "#FCE7F3", color: "#BE185D" },
-}
-
-interface Props { user: AuthUser }
 
 export default function OrderPage({ user }: Props) {
-  const [orders, setOrders] = useState<Order[]>(ORDERS)
-  const [filterStatus, setFilterStatus] = useState("전체")
-  const [showModal, setShowModal] = useState(false)
-  const [selected, setSelected] = useState<Order | null>(null)
+  const [orders, setOrders] = useState<OrderDetail[]>(ORDERS)
+  const [statusFilter, setStatusFilter] = useState<OrderStatus | "전체">("전체")
+  const [partnerFilter, setPartnerFilter] = useState<number | "전체">("전체")
+  const [detail, setDetail] = useState<OrderDetail | null>(null)
+  const [showCreate, setShowCreate] = useState(false)
+  const [cancelTarget, setCancelTarget] = useState<OrderDetail | null>(null)
+  const [cancelReason, setCancelReason] = useState("")
 
-  const canRegister = user.role === "ADMIN" || user.role === "SALES"
-  const canApprove  = user.role === "ADMIN" || user.role === "SALES"
+  const [draftPartner, setDraftPartner] = useState<number>(CUSTOMERS[0]?.partner_id ?? 0)
+  const [draftLines, setDraftLines] = useState<DraftLine[]>([{ item_id: ITEMS[0].item_id, quantity: 1 }])
 
-  const filtered = orders.filter((o) => filterStatus === "전체" || o.status === filterStatus)
+  // 8장 전체가 관리자·영업 권한이다
+  const canManage = user.role === "ADMIN" || user.role === "SALES"
 
-  const advanceStatus = (id: string) => {
+  const filtered = orders.filter((o) => {
+    const matchStatus = statusFilter === "전체" || o.status === statusFilter
+    const matchPartner = partnerFilter === "전체" || o.partner_id === partnerFilter
+    return matchStatus && matchPartner
+  })
+
+  const counts = {
+    PENDING: orders.filter((o) => o.status === "PENDING").length,
+    APPROVED: orders.filter((o) => o.status === "APPROVED").length,
+    CANCELLED: orders.filter((o) => o.status === "CANCELLED").length,
+  }
+
+  const deliveryOf = (orderId: number) => DELIVERIES.find((d) => d.order_id === orderId)
+
+  /** 8.4 주문 승인 — 재고 차감 후 납품(WAITING)이 생성된다 */
+  const approve = (order: OrderDetail) => {
     setOrders((prev) =>
-        prev.map((o) => {
-          if (o.id !== id) return o
-          const next = STATUS_FLOW[o.status]
-          return next ? { ...o, status: next } : o
-        })
+      prev.map((o) =>
+        o.order_id === order.order_id
+          ? { ...o, status: "APPROVED", approved_at: new Date().toISOString(), delivery_id: o.order_id }
+          : o,
+      ),
     )
+    setDetail(null)
   }
 
-  const updateStatus = (id: string, status: Order["status"]) => {
-    setOrders((prev) => prev.map((order) => order.id === id ? { ...order, status } : order))
+  /** 8.5 주문 취소 — PENDING 상태에서만 가능하다 */
+  const cancel = () => {
+    if (!cancelTarget) return
+    setOrders((prev) =>
+      prev.map((o) =>
+        o.order_id === cancelTarget.order_id
+          ? {
+              ...o,
+              status: "CANCELLED",
+              cancel_reason: cancelReason.trim() || null,
+              cancelled_at: new Date().toISOString(),
+              cancelled_by: user.user_id,
+            }
+          : o,
+      ),
+    )
+    setCancelTarget(null)
+    setCancelReason("")
+    setDetail(null)
   }
+
+  /** 8.2 주문 등록 — 판매단가는 서버가 상품 마스터에서 조회해 스냅샷으로 저장한다 */
+  const createOrder = () => {
+    const lines = draftLines.filter((l) => l.quantity > 0)
+    if (lines.length === 0) return
+
+    let itemSeq = Date.now()
+    const items: OrderItem[] = lines.map((line) => {
+      const item = itemOf(line.item_id)
+      return {
+        order_item_id: ++itemSeq,
+        item_id: item.item_id,
+        item_code: item.item_code,
+        item_name: item.item_name,
+        quantity: line.quantity,
+        unit_price: item.unit_price,
+        unit_cost: item.unit_cost,
+        line_amount: line.quantity * item.unit_price,
+      }
+    })
+
+    const nextId = Math.max(0, ...orders.map((o) => o.order_id)) + 1
+    const partner = CUSTOMERS.find((p) => p.partner_id === draftPartner)
+
+    setOrders((prev) => [
+      {
+        order_id: nextId,
+        order_number: `ORD-${TODAY.replace(/-/g, "")}-${String(nextId).padStart(4, "0")}`,
+        partner_id: draftPartner,
+        partner_name: partner?.name ?? "-",
+        status: "PENDING",
+        items,
+        total_amount: items.reduce((sum, i) => sum + i.line_amount, 0),
+        delivery_id: null,
+        cancel_reason: null,
+        approved_at: null,
+        cancelled_at: null,
+        cancelled_by: null,
+        created_by: user.user_id,
+        created_at: new Date().toISOString(),
+      },
+      ...prev,
+    ])
+    setShowCreate(false)
+    setDraftLines([{ item_id: ITEMS[0].item_id, quantity: 1 }])
+  }
+
+  const draftTotal = draftLines.reduce((sum, l) => {
+    const item = ITEMS.find((i) => i.item_id === l.item_id)
+    return sum + (item ? item.unit_price * l.quantity : 0)
+  }, 0)
+
+  const chipStyle = (active: boolean) => ({
+    background: active ? "#0B3D91" : "#F0F2F5",
+    color: active ? "white" : "#666",
+  })
 
   return (
       <div className="space-y-5">
+        {/* Header */}
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div>
-            <h2 className="font-semibold text-lg" style={{ color: "#1a1a1a" }}>주문 · 납품 관리</h2>
-            <p className="text-sm mt-0.5" style={{ color: "#888" }}>주문 등록 및 납품 상태 관리</p>
+            <h2 className="font-semibold text-lg" style={{ color: "#1a1a1a" }}>주문 관리</h2>
+            <p className="text-sm mt-0.5" style={{ color: "#888" }}>
+              고객사 주문 등록 · 승인 · 취소 — 재고는 승인 시점에 차감됩니다
+            </p>
           </div>
-          {canRegister && (
+          {canManage && (
               <button
-                  onClick={() => { setSelected(null); setShowModal(true) }}
+                  onClick={() => setShowCreate(true)}
                   className="flex items-center gap-2 px-4 py-2 text-sm font-medium"
                   style={{ background: "#0B3D91", color: "white", borderRadius: 7 }}
               >
@@ -91,114 +173,91 @@ export default function OrderPage({ user }: Props) {
           )}
         </div>
 
-        {/* Summary cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-          {[
-            { label: "대기",     count: orders.filter((o) => o.status === "대기").length,     color: "#92400E", bg: "#FEF9C3" },
-            { label: "출고완료", count: orders.filter((o) => o.status === "출고완료").length, color: "#1D4ED8", bg: "#DBEAFE" },
-            { label: "납품완료", count: orders.filter((o) => o.status === "납품완료").length, color: "#166534", bg: "#DCFCE7" },
-            { label: "취소",     count: orders.filter((o) => o.status === "취소").length,     color: "#6B7280", bg: "#F3F4F6" },
-            { label: "환불",     count: orders.filter((o) => o.status === "환불").length,     color: "#BE185D", bg: "#FCE7F3" },
-          ].map((s) => (
-              <div
-                  key={s.label}
-                  className="p-5 cursor-pointer transition-all duration-150"
-                  style={{ background: "white", borderRadius: 8, border: filterStatus === s.label ? `2px solid ${s.color}` : "1px solid #E5EAF0" }}
-                  onClick={() => setFilterStatus(filterStatus === s.label ? "전체" : s.label)}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-sm font-medium" style={{ color: "#666" }}>{s.label}</p>
-                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: s.bg, color: s.color }}>{s.count}건</span>
-                </div>
-                <p className="font-bold text-3xl" style={{ color: "#1a1a1a", fontFamily: "'Inter', sans-serif" }}>{s.count}</p>
+        {/* 상태 요약 */}
+        <div className="grid grid-cols-3 gap-3">
+          {ORDER_STATUSES.map((s) => (
+              <div key={s} className="bg-white px-4 py-4" style={{ borderRadius: 8, border: "1px solid #E5EAF0" }}>
+                <p className="text-xs" style={{ color: "#999" }}>{ORDER_STATUS_LABELS[s]}</p>
+                <p className="text-2xl font-bold mt-1" style={{ color: ORDER_STATUS_TONES[s].color, fontFamily: "'Inter', sans-serif" }}>
+                  {counts[s]}
+                </p>
               </div>
           ))}
         </div>
 
-        {/* Filter bar */}
-        <div className="flex gap-1 p-1 rounded-lg w-fit" style={{ background: "#F0F2F5" }}>
-          {["전체", "대기", "출고완료", "납품완료", "취소", "환불"].map((s) => (
-              <button
-                  key={s}
-                  onClick={() => setFilterStatus(s)}
-                  className="px-4 py-1.5 text-sm font-medium rounded-md transition-all duration-150"
-                  style={{
-                    background: filterStatus === s ? "white" : "transparent",
-                    color: filterStatus === s ? "#0B3D91" : "#888",
-                    boxShadow: filterStatus === s ? "0 1px 4px rgba(0,0,0,0.08)" : "none",
-                  }}
-              >
-                {s}
+        {/* 필터 */}
+        <div className="flex flex-wrap items-center gap-2">
+          <button onClick={() => setStatusFilter("전체")} className="px-3 py-1 text-xs font-medium rounded-full" style={chipStyle(statusFilter === "전체")}>
+            전체 ({orders.length})
+          </button>
+          {ORDER_STATUSES.map((s) => (
+              <button key={s} onClick={() => setStatusFilter(s)} className="px-3 py-1 text-xs font-medium rounded-full" style={chipStyle(statusFilter === s)}>
+                {ORDER_STATUS_LABELS[s]} ({counts[s]})
               </button>
           ))}
+          <select
+              value={partnerFilter}
+              onChange={(e) => setPartnerFilter(e.target.value === "전체" ? "전체" : Number(e.target.value))}
+              className="ml-auto px-3 py-1.5 text-xs outline-none cursor-pointer"
+              style={{ border: "1px solid #E5EAF0", borderRadius: 7, background: "white" }}
+          >
+            <option value="전체">전체 고객사</option>
+            {CUSTOMERS.map((p) => (
+                <option key={p.partner_id} value={p.partner_id}>{p.name}</option>
+            ))}
+          </select>
         </div>
 
-        {/* Orders table */}
+        {/* 목록 */}
         <div className="bg-white" style={{ borderRadius: 8, border: "1px solid #E5EAF0" }}>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
               <tr style={{ background: "#F7F9FC", borderBottom: "1px solid #E5EAF0" }}>
-                {["주문번호", "날짜", "거래처", "제품명", "대표 용도", "수량", "단가", "총액", "상태", "액션"].map((h) => (
-                    <th key={h} className="px-4 py-3 text-left font-medium" style={{ color: "#888", fontSize: 12, whiteSpace: "nowrap" }}>{h}</th>
+                {["주문번호", "고객사", "품목 수", "주문 금액", "주문 상태", "납품 상태", "등록일", ""].map((h) => (
+                    <th key={h} className="px-5 py-3 text-left font-medium" style={{ color: "#888", fontSize: 12, whiteSpace: "nowrap" }}>{h}</th>
                 ))}
               </tr>
               </thead>
               <tbody>
               {filtered.map((o, i) => {
-                const total = o.qty * o.unitPrice
-                const nextStatus = STATUS_FLOW[o.status]
-                const isClosed = o.status === "취소" || o.status === "환불"
+                const delivery = deliveryOf(o.order_id)
+                const tone = ORDER_STATUS_TONES[o.status]
                 return (
                     <tr
-                        key={o.id}
-                        className={isClosed ? "[&>td]:line-through opacity-60" : ""}
+                        key={o.order_id}
                         style={{ borderTop: i > 0 ? "1px solid #F3F4F6" : "none" }}
                         onMouseEnter={(e) => (e.currentTarget.style.background = "#FAFAFA")}
                         onMouseLeave={(e) => (e.currentTarget.style.background = "white")}
                     >
-                      <td className="px-4 py-3 text-xs" style={{ color: "#bbb", fontFamily: "'Inter', sans-serif" }}>{o.id}</td>
-                      <td className="px-4 py-3 text-xs" style={{ color: "#999" }}>{o.date}</td>
-                      <td className="px-4 py-3 font-medium text-sm" style={{ color: "#1a1a1a" }}>{o.partner}</td>
-                      <td className="px-4 py-3 font-medium text-sm" style={{ color: "#1a1a1a", whiteSpace: "nowrap" }}>{o.productName}</td>
-                      <td className="px-4 py-3 text-xs" style={{ color: "#888" }}>{o.indication}</td>
-                      <td className="px-4 py-3 text-sm" style={{ fontFamily: "'Inter', sans-serif", color: "#555" }}>{o.qty.toLocaleString()}</td>
-                      <td className="px-4 py-3 text-sm" style={{ fontFamily: "'Inter', sans-serif", color: "#555" }}>₩{o.unitPrice.toLocaleString()}</td>
-                      <td className="px-4 py-3 font-semibold text-sm" style={{ fontFamily: "'Inter', sans-serif", color: "#1a1a1a" }}>₩{total.toLocaleString()}</td>
-                      <td className="px-4 py-3">
-                        <span className="text-xs font-medium px-2.5 py-1 rounded-full" style={statusColors[o.status]}>{o.status}</span>
+                      <td className="px-5 py-4 font-mono text-xs" style={{ color: "#666" }}>{o.order_number}</td>
+                      <td className="px-5 py-4 font-medium" style={{ color: "#1a1a1a" }}>{o.partner_name}</td>
+                      <td className="px-5 py-4 text-sm" style={{ color: "#555" }}>{o.items.length}개</td>
+                      <td className="px-5 py-4 font-medium" style={{ color: "#333", fontFamily: "'Inter', sans-serif" }}>{formatMoney(o.total_amount)}</td>
+                      <td className="px-5 py-4">
+                        <span className="text-xs font-medium px-2.5 py-1 rounded-full" style={tone}>
+                          {ORDER_STATUS_LABELS[o.status]}
+                        </span>
                       </td>
-                      <td className="px-4 py-3">
-                        <div className="flex gap-2">
-                          {canApprove && nextStatus && (
-                              <button
-                                  onClick={() => advanceStatus(o.id)}
-                                  className="text-xs font-medium px-2.5 py-1 transition-colors"
-                                  style={{ background: "#EFF6FF", color: "#1D4ED8", borderRadius: 5 }}
-                              >
-                                → {nextStatus}
-                              </button>
+                      <td className="px-5 py-4">
+                        {delivery ? (
+                            <span className="text-xs font-medium px-2.5 py-1 rounded-full" style={DELIVERY_STATUS_TONES[delivery.status]}>
+                              {DELIVERY_STATUS_LABELS[delivery.status]}
+                            </span>
+                        ) : (
+                            <span className="text-xs" style={{ color: "#bbb" }}>-</span>
+                        )}
+                      </td>
+                      <td className="px-5 py-4 text-xs" style={{ color: "#999", fontFamily: "'Inter', sans-serif" }}>{formatDate(o.created_at)}</td>
+                      <td className="px-5 py-4">
+                        <div className="flex gap-3">
+                          <button onClick={() => setDetail(o)} className="text-xs font-medium" style={{ color: "#0B3D91" }}>상세</button>
+                          {canManage && o.status === "PENDING" && (
+                              <>
+                                <button onClick={() => approve(o)} className="text-xs font-medium" style={{ color: "#059669" }}>승인</button>
+                                <button onClick={() => { setCancelTarget(o); setCancelReason("") }} className="text-xs font-medium" style={{ color: "#DC2626" }}>취소</button>
+                              </>
                           )}
-                          {!isClosed && (
-                              <button
-                                  onClick={() => { setSelected(o); setShowModal(true) }}
-                                  className="text-xs font-medium"
-                                  style={{ color: "#0B3D91" }}
-                              >
-                                납품서
-                              </button>
-                          )}
-                          {canRegister && o.status === "대기" && (
-                              <button onClick={() => updateStatus(o.id, "취소")} className="text-xs font-medium" style={{ color: "#6B7280" }}>
-                                취소
-                              </button>
-                          )}
-                          {canRegister && o.status === "납품완료" && (
-                              <button onClick={() => updateStatus(o.id, "환불")} className="text-xs font-medium" style={{ color: "#BE185D" }}>
-                                환불
-                              </button>
-                          )}
-                          {isClosed && <span className="text-xs" style={{ color: "#999" }}>처리 완료</span>}
                         </div>
                       </td>
                     </tr>
@@ -207,107 +266,216 @@ export default function OrderPage({ user }: Props) {
               </tbody>
             </table>
           </div>
+          {filtered.length === 0 && (
+              <div className="py-14 text-center text-sm" style={{ color: "#999" }}>조건에 맞는 주문이 없습니다.</div>
+          )}
         </div>
 
-        {/* Modal */}
-        {showModal && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.45)" }} onClick={() => setShowModal(false)}>
-              <div className="bg-white w-full max-w-lg p-8 relative" style={{ borderRadius: 12, maxHeight: "90vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
-                <button onClick={() => setShowModal(false)} className="absolute top-5 right-5 opacity-40 hover:opacity-100">
+        {/* 8.3 주문 상세 */}
+        {detail && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.45)" }} onClick={() => setDetail(null)}>
+              <div className="bg-white w-full max-w-2xl p-8 relative" style={{ borderRadius: 12, maxHeight: "90vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+                <button onClick={() => setDetail(null)} aria-label="닫기" className="absolute top-5 right-5 opacity-40 hover:opacity-100">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#333" strokeWidth="2">
                     <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
                   </svg>
                 </button>
 
-                {selected ? (
-                    /* Delivery Slip */
-                    <div>
-                      <div className="flex items-center justify-between mb-6">
-                        <div>
-                          <p className="text-xs uppercase tracking-widest font-semibold mb-1" style={{ color: "#1677FF" }}>PHARMLINK</p>
-                          <h3 className="font-bold text-xl" style={{ color: "#0B3D91" }}>납품서</h3>
-                        </div>
-                        <div className="text-right text-xs" style={{ color: "#888" }}>
-                          <p>발행일: {selected.date}</p>
-                          <p style={{ fontFamily: "'Inter', sans-serif" }}>{selected.id}</p>
-                        </div>
-                      </div>
-                      <div className="py-4 mb-4 space-y-2" style={{ borderTop: "2px solid #0B3D91", borderBottom: "1px solid #E5EAF0" }}>
-                        {[
-                          { label: "거래처",   value: selected.partner },
-                          { label: "카테고리", value: selected.category },
-                          { label: "제품명",   value: selected.productName },
-                          { label: "대표 용도", value: selected.indication },
-                          { label: "상태",     value: selected.status },
-                        ].map((r) => (
-                            <div key={r.label} className="flex gap-3 text-sm">
-                              <span className="font-medium w-20 shrink-0" style={{ color: "#666" }}>{r.label}</span>
-                              <span style={{ color: "#333" }}>{r.value}</span>
-                            </div>
-                        ))}
-                      </div>
-                      <table className="w-full text-sm mb-6">
-                        <thead>
-                        <tr style={{ borderBottom: "1px solid #E5EAF0" }}>
-                          <th className="py-2 text-left text-xs font-medium" style={{ color: "#888" }}>품목</th>
-                          <th className="py-2 text-right text-xs font-medium" style={{ color: "#888" }}>수량</th>
-                          <th className="py-2 text-right text-xs font-medium" style={{ color: "#888" }}>단가</th>
-                          <th className="py-2 text-right text-xs font-medium" style={{ color: "#888" }}>금액</th>
-                        </tr>
-                        </thead>
-                        <tbody>
-                        <tr>
-                          <td className="py-3 text-sm">{selected.productName}</td>
-                          <td className="py-3 text-right text-sm" style={{ fontFamily: "'Inter', sans-serif" }}>{selected.qty.toLocaleString()}</td>
-                          <td className="py-3 text-right text-sm" style={{ fontFamily: "'Inter', sans-serif" }}>₩{selected.unitPrice.toLocaleString()}</td>
-                          <td className="py-3 text-right font-semibold text-sm" style={{ fontFamily: "'Inter', sans-serif" }}>₩{(selected.qty * selected.unitPrice).toLocaleString()}</td>
-                        </tr>
-                        </tbody>
-                      </table>
-                      <div className="flex justify-between items-center pt-4" style={{ borderTop: "2px solid #0B3D91" }}>
-                        <span className="font-semibold text-sm">합계</span>
-                        <span className="font-bold text-lg" style={{ color: "#0B3D91", fontFamily: "'Inter', sans-serif" }}>
-                    ₩{(selected.qty * selected.unitPrice).toLocaleString()}
+                <div className="flex items-center gap-3 mb-1">
+                  <h3 className="font-semibold text-lg" style={{ color: "#1a1a1a" }}>{detail.order_number}</h3>
+                  <span className="text-xs font-medium px-2.5 py-1 rounded-full" style={ORDER_STATUS_TONES[detail.status]}>
+                    {ORDER_STATUS_LABELS[detail.status]}
                   </span>
+                </div>
+                <p className="text-sm mb-6" style={{ color: "#888" }}>{detail.partner_name}</p>
+
+                <table className="w-full text-sm mb-5">
+                  <thead>
+                  <tr style={{ background: "#F7F9FC" }}>
+                    {["상품", "수량", "판매단가", "원가", "금액"].map((h) => (
+                        <th key={h} className="px-3 py-2 text-left font-medium" style={{ color: "#888", fontSize: 11 }}>{h}</th>
+                    ))}
+                  </tr>
+                  </thead>
+                  <tbody>
+                  {detail.items.map((item, i) => (
+                      <tr key={item.order_item_id} style={{ borderTop: i > 0 ? "1px solid #F3F4F6" : "none" }}>
+                        <td className="px-3 py-2">
+                          <p className="text-sm font-medium" style={{ color: "#1a1a1a" }}>{item.item_name}</p>
+                          <p className="font-mono text-xs" style={{ color: "#aaa" }}>{item.item_code}</p>
+                        </td>
+                        <td className="px-3 py-2 text-sm" style={{ color: "#555", fontFamily: "'Inter', sans-serif" }}>{formatNumber(item.quantity)}</td>
+                        <td className="px-3 py-2 text-sm" style={{ color: "#555", fontFamily: "'Inter', sans-serif" }}>{formatMoney(item.unit_price)}</td>
+                        <td className="px-3 py-2 text-xs" style={{ color: "#999", fontFamily: "'Inter', sans-serif" }}>{item.unit_cost ? formatMoney(item.unit_cost) : "-"}</td>
+                        <td className="px-3 py-2 text-sm font-medium" style={{ color: "#1a1a1a", fontFamily: "'Inter', sans-serif" }}>{formatMoney(item.line_amount)}</td>
+                      </tr>
+                  ))}
+                  </tbody>
+                </table>
+                <p className="text-xs mb-6" style={{ color: "#aaa" }}>
+                  단가는 주문 등록 시점의 스냅샷입니다. 이후 상품 마스터 단가가 바뀌어도 이 주문의 금액은 변하지 않습니다.
+                </p>
+
+                <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm pt-5" style={{ borderTop: "1px solid #F0F0F0" }}>
+                  {[
+                    { label: "주문 금액", value: formatMoney(detail.total_amount) },
+                    { label: "등록일시", value: formatDateTime(detail.created_at) },
+                    { label: "승인일시", value: formatDateTime(detail.approved_at) },
+                    { label: "납품", value: detail.delivery_id ? `#${detail.delivery_id} · ${DELIVERY_STATUS_LABELS[deliveryOf(detail.order_id)?.status ?? "WAITING"]}` : "미생성" },
+                    ...(detail.status === "CANCELLED"
+                        ? [
+                            { label: "취소일시", value: formatDateTime(detail.cancelled_at) },
+                            { label: "취소 사유", value: detail.cancel_reason ?? "-" },
+                          ]
+                        : []),
+                  ].map((row) => (
+                      <div key={row.label}>
+                        <p className="text-xs" style={{ color: "#999" }}>{row.label}</p>
+                        <p className="mt-0.5" style={{ color: "#333" }}>{row.value}</p>
                       </div>
-                      <button onClick={() => window.print()} className="mt-6 w-full py-2.5 text-sm font-medium" style={{ background: "#0B3D91", color: "white", borderRadius: 7 }}>
-                        PDF / 인쇄
-                      </button>
-                    </div>
-                ) : (
-                    /* New Order Form */
-                    <div>
-                      <h3 className="font-semibold text-lg mb-6" style={{ color: "#1a1a1a" }}>주문 등록</h3>
-                      <div className="space-y-4">
-                        <div>
-                          <label className="block text-xs font-medium mb-1.5" style={{ color: "#666" }}>거래처</label>
-                          <input className="w-full px-3 py-2 text-sm outline-none" style={{ border: "1px solid #E5EAF0", borderRadius: 6 }} />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-medium mb-1.5" style={{ color: "#666" }}>품목 선택</label>
-                          <select className="w-full px-3 py-2 text-sm outline-none" style={{ border: "1px solid #E5EAF0", borderRadius: 6, color: "#333" }}>
-                            {CATEGORIES.map((cat) => (
-                                <optgroup key={cat} label={cat}>
-                                  {PRODUCTS.filter((p) => p.category === cat).map((p) => (
-                                      <option key={p.code} value={p.code}>{p.name} — {p.indication}</option>
-                                  ))}
-                                </optgroup>
+                  ))}
+                </div>
+
+                <div className="flex gap-3 mt-7 justify-end">
+                  {canManage && detail.status === "PENDING" && (
+                      <>
+                        <button
+                            onClick={() => { setCancelTarget(detail); setCancelReason("") }}
+                            className="px-5 py-2 text-sm font-medium"
+                            style={{ border: "1px solid #FECACA", borderRadius: 7, color: "#DC2626", background: "white" }}
+                        >
+                          주문 취소
+                        </button>
+                        <button
+                            onClick={() => approve(detail)}
+                            className="px-5 py-2 text-sm font-medium"
+                            style={{ background: "#059669", color: "white", borderRadius: 7 }}
+                        >
+                          승인 (재고 차감)
+                        </button>
+                      </>
+                  )}
+                  <button onClick={() => setDetail(null)} className="px-5 py-2 text-sm font-medium" style={{ border: "1px solid #E5EAF0", borderRadius: 7, color: "#666" }}>닫기</button>
+                </div>
+              </div>
+            </div>
+        )}
+
+        {/* 8.5 주문 취소 */}
+        {cancelTarget && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.45)" }} onClick={() => setCancelTarget(null)}>
+              <div className="bg-white w-full max-w-md p-7" style={{ borderRadius: 12 }} onClick={(e) => e.stopPropagation()}>
+                <h3 className="font-semibold text-base mb-1" style={{ color: "#1a1a1a" }}>주문 취소</h3>
+                <p className="text-sm mb-5" style={{ color: "#888" }}>
+                  {cancelTarget.order_number} · {cancelTarget.partner_name}
+                </p>
+                <label className="block text-xs font-medium mb-1.5" style={{ color: "#666" }}>취소 사유 (선택, 최대 200자)</label>
+                <input
+                    value={cancelReason}
+                    onChange={(e) => setCancelReason(e.target.value.slice(0, 200))}
+                    placeholder="거래처 요청으로 주문 철회"
+                    className="w-full px-3 py-2 text-sm outline-none"
+                    style={{ border: "1px solid #E5EAF0", borderRadius: 6, color: "#333" }}
+                />
+                <div className="flex gap-3 mt-6 justify-end">
+                  <button onClick={() => setCancelTarget(null)} className="px-5 py-2 text-sm font-medium" style={{ border: "1px solid #E5EAF0", borderRadius: 7, color: "#666" }}>닫기</button>
+                  <button onClick={cancel} className="px-5 py-2 text-sm font-medium" style={{ background: "#DC2626", color: "white", borderRadius: 7 }}>취소 처리</button>
+                </div>
+              </div>
+            </div>
+        )}
+
+        {/* 8.2 주문 등록 */}
+        {showCreate && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.45)" }} onClick={() => setShowCreate(false)}>
+              <div className="bg-white w-full max-w-2xl p-8 relative" style={{ borderRadius: 12, maxHeight: "90vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+                <button onClick={() => setShowCreate(false)} aria-label="닫기" className="absolute top-5 right-5 opacity-40 hover:opacity-100">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#333" strokeWidth="2">
+                    <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+                <h3 className="font-semibold text-lg mb-1" style={{ color: "#1a1a1a" }}>주문 등록</h3>
+                <p className="text-sm mb-6" style={{ color: "#888" }}>
+                  등록 직후 상태는 승인 대기입니다. 판매단가는 상품 마스터에서 자동으로 적용됩니다.
+                </p>
+
+                <div className="mb-5">
+                  <label className="block text-xs font-medium mb-1.5" style={{ color: "#666" }}>고객사</label>
+                  <select
+                      value={draftPartner}
+                      onChange={(e) => setDraftPartner(Number(e.target.value))}
+                      className="w-full px-3 py-2 text-sm outline-none cursor-pointer"
+                      style={{ border: "1px solid #E5EAF0", borderRadius: 6, background: "white", color: "#333" }}
+                  >
+                    {CUSTOMERS.filter((p) => p.is_active).map((p) => (
+                        <option key={p.partner_id} value={p.partner_id}>{p.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <label className="block text-xs font-medium mb-1.5" style={{ color: "#666" }}>주문 품목</label>
+                <div className="space-y-2">
+                  {draftLines.map((line, idx) => {
+                    const item = ITEMS.find((i) => i.item_id === line.item_id)
+                    return (
+                        <div key={idx} className="flex gap-2 items-center">
+                          <select
+                              value={line.item_id}
+                              onChange={(e) =>
+                                setDraftLines((prev) => prev.map((l, i) => (i === idx ? { ...l, item_id: Number(e.target.value) } : l)))
+                              }
+                              className="flex-1 px-3 py-2 text-sm outline-none cursor-pointer"
+                              style={{ border: "1px solid #E5EAF0", borderRadius: 6, background: "white", color: "#333" }}
+                          >
+                            {ITEMS.filter((i) => i.is_active).map((i) => (
+                                <option key={i.item_id} value={i.item_id}>{i.item_code} · {i.item_name}</option>
                             ))}
                           </select>
+                          <input
+                              value={line.quantity}
+                              onChange={(e) =>
+                                setDraftLines((prev) =>
+                                  prev.map((l, i) => (i === idx ? { ...l, quantity: Math.max(1, Number(e.target.value.replace(/\D/g, "") || 1)) } : l)),
+                                )
+                              }
+                              inputMode="numeric"
+                              className="w-20 px-3 py-2 text-sm outline-none text-right"
+                              style={{ border: "1px solid #E5EAF0", borderRadius: 6, color: "#333" }}
+                          />
+                          <span className="w-24 text-right text-sm" style={{ color: "#666", fontFamily: "'Inter', sans-serif" }}>
+                            {formatMoney((item?.unit_price ?? 0) * line.quantity)}
+                          </span>
+                          <button
+                              onClick={() => setDraftLines((prev) => prev.filter((_, i) => i !== idx))}
+                              disabled={draftLines.length === 1}
+                              aria-label="품목 삭제"
+                              className="px-2 py-2 text-sm"
+                              style={{ color: draftLines.length === 1 ? "#ddd" : "#DC2626" }}
+                          >
+                            ✕
+                          </button>
                         </div>
-                        {[{ label: "수량", type: "number" }, { label: "단가 (₩)", type: "number" }, { label: "비고", type: "text" }].map((f) => (
-                            <div key={f.label}>
-                              <label className="block text-xs font-medium mb-1.5" style={{ color: "#666" }}>{f.label}</label>
-                              <input type={f.type} className="w-full px-3 py-2 text-sm outline-none" style={{ border: "1px solid #E5EAF0", borderRadius: 6, color: "#333" }} />
-                            </div>
-                        ))}
-                      </div>
-                      <div className="flex gap-3 mt-6 justify-end">
-                        <button onClick={() => setShowModal(false)} className="px-5 py-2 text-sm font-medium" style={{ border: "1px solid #E5EAF0", borderRadius: 7, color: "#666" }}>취소</button>
-                        <button onClick={() => setShowModal(false)} className="px-5 py-2 text-sm font-medium" style={{ background: "#0B3D91", color: "white", borderRadius: 7 }}>등록</button>
-                      </div>
-                    </div>
-                )}
+                    )
+                  })}
+                </div>
+
+                <button
+                    onClick={() => setDraftLines((prev) => [...prev, { item_id: ITEMS[0].item_id, quantity: 1 }])}
+                    className="mt-3 px-3 py-1.5 text-xs font-medium"
+                    style={{ border: "1px dashed #CBD5E1", borderRadius: 6, color: "#0B3D91" }}
+                >
+                  + 품목 추가
+                </button>
+
+                <div className="flex items-center justify-between mt-6 pt-5" style={{ borderTop: "1px solid #F0F0F0" }}>
+                  <span className="text-sm" style={{ color: "#666" }}>주문 금액</span>
+                  <span className="text-lg font-bold" style={{ color: "#0B3D91", fontFamily: "'Inter', sans-serif" }}>{formatMoney(draftTotal)}</span>
+                </div>
+
+                <div className="flex gap-3 mt-6 justify-end">
+                  <button onClick={() => setShowCreate(false)} className="px-5 py-2 text-sm font-medium" style={{ border: "1px solid #E5EAF0", borderRadius: 7, color: "#666" }}>취소</button>
+                  <button onClick={createOrder} className="px-5 py-2 text-sm font-medium" style={{ background: "#0B3D91", color: "white", borderRadius: 7 }}>등록</button>
+                </div>
               </div>
             </div>
         )}

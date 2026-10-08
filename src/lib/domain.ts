@@ -151,6 +151,19 @@ export const CATEGORY_CODES: Record<string, string> = {
 
 export const ITEM_CODE_FALLBACK = "OT"
 
+/** 카테고리 배지 색. 초기 데이터 5종 외에는 기타 색을 쓴다 */
+export const CATEGORY_COLORS: Record<string, { bg: string; color: string; border: string }> = {
+  "감염성질환 및 호흡기계": { bg: "#EFF6FF", color: "#1D4ED8", border: "#BFDBFE" },
+  "소화기계 및 순환기계": { bg: "#F0FDF4", color: "#166534", border: "#BBF7D0" },
+  "신경계 및 정신/행동장애": { bg: "#FDF4FF", color: "#7C3AED", border: "#E9D5FF" },
+  "호르몬 및 대사성 의약품": { bg: "#FFF7ED", color: "#9A3412", border: "#FED7AA" },
+  기타: { bg: "#F9FAFB", color: "#374151", border: "#E5E7EB" },
+}
+
+export function categoryTone(categoryName: string) {
+  return CATEGORY_COLORS[categoryName] ?? CATEGORY_COLORS["기타"]
+}
+
 export function categoryCode(categoryName: string): string {
   return CATEGORY_CODES[categoryName] ?? ITEM_CODE_FALLBACK
 }

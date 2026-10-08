@@ -1,279 +1,274 @@
 import { useState } from "react"
-import { PRODUCTS, CATEGORY_COLORS } from "../data/products"
 import type { AuthUser } from "../App"
+import { CUSTOMERS, DELIVERIES } from "../data/sample"
+import {
+  DELIVERY_STATUS_LABELS,
+  DELIVERY_STATUS_TONES,
+  formatDate,
+  formatDateTime,
+  formatMoney,
+  formatNumber,
+} from "../lib/domain"
+import { DELIVERY_STATUSES } from "../types/api"
+import type { DeliveryDetail, DeliveryStatus } from "../types/api"
 
-interface DeliveryItem {
-    id: number
-    orderId: string
-    partner: string
-    partnerType: "약국" | "병원" | "도매상"
-    productCode: string
-    productName: string
-    category: string
-    qty: number
-    unitPrice: number
-    status: "출고대기" | "출고완료" | "납품완료"
-    orderDate: string
-    shipDate?: string
-    completeDate?: string
+/**
+ * 9. 납품.
+ *
+ * WAITING → SHIPPED → DELIVERED 로만 전이한다. 재고는 주문 승인(8.4) 시점에
+ * 이미 차감되었으므로 납품 상태를 바꿔도 재고는 변하지 않는다. 납품 완료(9.4)
+ * 시점에 매출이 자동 생성된다.
+ */
+
+interface Props {
+  user: AuthUser
 }
-
-const INITIAL_DELIVERIES: DeliveryItem[] = [
-    { id: 1, orderId: "ORD-0821", partner: "행복약국", partnerType: "약국", productCode: "IT_MED_0001", productName: "타이레놀정 500mg", category: "일반의약품", qty: 200, unitPrice: 3200, status: "납품완료", orderDate: "2026-09-01", shipDate: "2026-09-03", completeDate: "2026-09-04" },
-    { id: 2, orderId: "ORD-0822", partner: "미래병원", partnerType: "병원", productCode: "IT_ANT_0001", productName: "아목시실린캡슐 250mg", category: "항생제", qty: 150, unitPrice: 4500, status: "납품완료", orderDate: "2026-09-03", shipDate: "2026-09-05", completeDate: "2026-09-06" },
-    { id: 3, orderId: "ORD-0823", partner: "서울중앙병원", partnerType: "병원", productCode: "IT_CAR_0001", productName: "아스피린장용정 100mg", category: "심혈관계", qty: 300, unitPrice: 2800, status: "출고완료", orderDate: "2026-09-08", shipDate: "2026-09-10" },
-    { id: 4, orderId: "ORD-0824", partner: "그린약국", partnerType: "약국", productCode: "IT_VIT_0001", productName: "비타민C 1000mg", category: "건강기능식품", qty: 100, unitPrice: 8500, status: "출고완료", orderDate: "2026-09-10", shipDate: "2026-09-12" },
-    { id: 5, orderId: "ORD-0825", partner: "한국도매", partnerType: "도매상", productCode: "IT_ALL_0001", productName: "지르텍정 10mg", category: "알러지·호흡기", qty: 500, unitPrice: 3800, status: "출고대기", orderDate: "2026-09-15" },
-    { id: 6, orderId: "ORD-0826", partner: "강남약국", partnerType: "약국", productCode: "IT_MED_0002", productName: "부루펜정 400mg", category: "일반의약품", qty: 120, unitPrice: 2900, status: "출고대기", orderDate: "2026-09-16" },
-    { id: 7, orderId: "ORD-0827", partner: "동화의원", partnerType: "병원", productCode: "IT_ANT_0002", productName: "세파클러캡슐 250mg", category: "항생제", qty: 80, unitPrice: 6200, status: "출고대기", orderDate: "2026-09-18" },
-    { id: 8, orderId: "ORD-0828", partner: "메디팜도매", partnerType: "도매상", productCode: "IT_CAR_0002", productName: "로수바스타틴정 10mg", category: "심혈관계", qty: 400, unitPrice: 5100, status: "납품완료", orderDate: "2026-09-05", shipDate: "2026-09-07", completeDate: "2026-09-08" },
-]
-
-const STATUS_STYLE: Record<string, { bg: string; color: string }> = {
-    "출고대기": { bg: "#FFF7ED", color: "#C2410C" },
-    "출고완료": { bg: "#EFF6FF", color: "#1D4ED8" },
-    "납품완료": { bg: "#F0FDF4", color: "#166534" },
-}
-
-interface Props { user: AuthUser }
 
 export default function DeliveryPage({ user }: Props) {
-    const [deliveries, setDeliveries] = useState<DeliveryItem[]>(INITIAL_DELIVERIES)
-    const [statusFilter, setStatusFilter] = useState("전체")
-    const [search, setSearch] = useState("")
-    const [detailItem, setDetailItem] = useState<DeliveryItem | null>(null)
+  const [deliveries, setDeliveries] = useState<DeliveryDetail[]>(DELIVERIES)
+  const [statusFilter, setStatusFilter] = useState<DeliveryStatus | "전체">("전체")
+  const [partnerFilter, setPartnerFilter] = useState<number | "전체">("전체")
+  const [detail, setDetail] = useState<DeliveryDetail | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
 
-    const filtered = deliveries.filter((d) => {
-        const matchStatus = statusFilter === "전체" || d.status === statusFilter
-        const matchSearch =
-            d.partner.includes(search) ||
-            d.productName.includes(search) ||
-            d.orderId.includes(search)
-        return matchStatus && matchSearch
-    })
+  // 9.3 출고 완료와 9.4 납품 완료는 관리자·창고 권한이다
+  const canProcess = user.role === "ADMIN" || user.role === "WAREHOUSE"
 
-    const canShip = user.role === "ADMIN" || user.role === "WAREHOUSE"
+  const filtered = deliveries.filter((d) => {
+    const matchStatus = statusFilter === "전체" || d.status === statusFilter
+    const matchPartner = partnerFilter === "전체" || d.partner_id === partnerFilter
+    return matchStatus && matchPartner
+  })
 
-    const advanceStatus = (id: number) => {
-        setDeliveries((prev) =>
-            prev.map((d) => {
-                if (d.id !== id) return d
-                if (d.status === "출고대기") return { ...d, status: "출고완료", shipDate: new Date().toISOString().slice(0, 10) }
-                if (d.status === "출고완료") return { ...d, status: "납품완료", completeDate: new Date().toISOString().slice(0, 10) }
-                return d
-            })
-        )
-    }
+  const counts = {
+    WAITING: deliveries.filter((d) => d.status === "WAITING").length,
+    SHIPPED: deliveries.filter((d) => d.status === "SHIPPED").length,
+    DELIVERED: deliveries.filter((d) => d.status === "DELIVERED").length,
+  }
 
-    const statusCounts = {
-        "출고대기": deliveries.filter((d) => d.status === "출고대기").length,
-        "출고완료": deliveries.filter((d) => d.status === "출고완료").length,
-        "납품완료": deliveries.filter((d) => d.status === "납품완료").length,
-    }
-
-    return (
-        <div className="space-y-5">
-            <div className="flex items-center justify-between flex-wrap gap-4">
-                <div>
-                    <h2 className="font-semibold text-lg" style={{ color: "#1a1a1a" }}>납품 관리</h2>
-                    <p className="text-sm mt-0.5" style={{ color: "#888" }}>출고 처리 · 납품 완료 · 납품서 발행 관리</p>
-                </div>
-            </div>
-
-            {/* Status KPI cards */}
-            <div className="grid grid-cols-3 gap-3">
-                {(["출고대기", "출고완료", "납품완료"] as const).map((s) => {
-                    const sty = STATUS_STYLE[s]
-                    return (
-                        <div key={s} className="bg-white px-5 py-4 flex items-center gap-4" style={{ borderRadius: 8, border: "1px solid #E5EAF0" }}>
-                            <div className="flex-1">
-                                <p className="text-xs" style={{ color: "#999" }}>{s}</p>
-                                <p className="text-2xl font-bold mt-1" style={{ color: sty.color, fontFamily: "'Inter', sans-serif" }}>{statusCounts[s]}</p>
-                            </div>
-                            <div className="w-10 h-10 flex items-center justify-center rounded-lg" style={{ background: sty.bg }}>
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={sty.color} strokeWidth="1.8">
-                                    <path d="M16 16v-4a2 2 0 00-2-2H8.5L6 8H3M6 16a2 2 0 100 4 2 2 0 000-4zM18 16a2 2 0 100 4 2 2 0 000-4zM6 8l2 8h12" />
-                                </svg>
-                            </div>
-                        </div>
-                    )
-                })}
-            </div>
-
-            {/* Filters */}
-            <div className="flex flex-wrap gap-3 items-center">
-                <div className="flex gap-2">
-                    {["전체", "출고대기", "출고완료", "납품완료"].map((s) => {
-                        const sty = s !== "전체" ? STATUS_STYLE[s] : null
-                        const active = statusFilter === s
-                        return (
-                            <button
-                                key={s}
-                                onClick={() => setStatusFilter(s)}
-                                className="px-3 py-1.5 text-xs font-medium rounded-full transition-all"
-                                style={{
-                                    background: active ? (sty?.color ?? "#0B3D91") : "#F0F2F5",
-                                    color: active ? "white" : "#666",
-                                }}
-                            >
-                                {s}
-                            </button>
-                        )
-                    })}
-                </div>
-                <div className="relative">
-                    <svg className="absolute left-3 top-1/2 -translate-y-1/2" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#aaa" strokeWidth="2">
-                        <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
-                    </svg>
-                    <input
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                        placeholder="거래처, 제품명, 주문번호 검색..."
-                        className="pl-8 pr-3 py-1.5 text-sm outline-none"
-                        style={{ border: "1px solid #E5EAF0", borderRadius: 7, background: "white", minWidth: 230 }}
-                    />
-                </div>
-                <span className="text-xs" style={{ color: "#999" }}>{filtered.length}건</span>
-            </div>
-
-            {/* Table */}
-            <div className="bg-white overflow-hidden" style={{ borderRadius: 8, border: "1px solid #E5EAF0" }}>
-                <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                        <thead>
-                        <tr style={{ background: "#FAFAFA", borderBottom: "1px solid #F0F0F0" }}>
-                            {["주문번호", "거래처", "의약품", "카테고리", "수량", "금액", "주문일", "상태", ""].map((h) => (
-                                <th key={h} className="px-4 py-3 text-left font-medium" style={{ color: "#aaa", fontSize: 11, whiteSpace: "nowrap" }}>{h}</th>
-                            ))}
-                        </tr>
-                        </thead>
-                        <tbody>
-                        {filtered.map((d, i) => {
-                            const sty = STATUS_STYLE[d.status]
-                            const catColor = CATEGORY_COLORS[d.category as keyof typeof CATEGORY_COLORS]
-                            return (
-                                <tr
-                                    key={d.id}
-                                    style={{ borderTop: i > 0 ? "1px solid #F5F5F5" : "none" }}
-                                    onMouseEnter={(e) => (e.currentTarget.style.background = "#FAFAFA")}
-                                    onMouseLeave={(e) => (e.currentTarget.style.background = "white")}
-                                >
-                                    <td className="px-4 py-3 text-xs font-medium" style={{ color: "#0B3D91", fontFamily: "'Inter', sans-serif" }}>
-                                        <button onClick={() => setDetailItem(d)} className="hover:underline">{d.orderId}</button>
-                                    </td>
-                                    <td className="px-4 py-3 font-medium" style={{ color: "#1a1a1a", whiteSpace: "nowrap" }}>
-                                        {d.partner}
-                                        <span className="ml-1.5 text-xs" style={{ color: "#bbb" }}>{d.partnerType}</span>
-                                    </td>
-                                    <td className="px-4 py-3 text-sm" style={{ color: "#333", whiteSpace: "nowrap" }}>{d.productName}</td>
-                                    <td className="px-4 py-3">
-                                        {catColor && (
-                                            <span className="text-xs font-medium px-2 py-0.5 rounded-full" style={{ background: catColor.bg, color: catColor.color }}>
-                          {d.category}
-                        </span>
-                                        )}
-                                    </td>
-                                    <td className="px-4 py-3 text-sm" style={{ color: "#555", fontFamily: "'Inter', sans-serif" }}>{d.qty.toLocaleString()}</td>
-                                    <td className="px-4 py-3 text-sm font-medium" style={{ color: "#1a1a1a", fontFamily: "'Inter', sans-serif" }}>
-                                        ₩{(d.qty * d.unitPrice).toLocaleString()}
-                                    </td>
-                                    <td className="px-4 py-3 text-xs" style={{ color: "#999", fontFamily: "'Inter', sans-serif" }}>{d.orderDate}</td>
-                                    <td className="px-4 py-3">
-                      <span className="text-xs font-medium px-2 py-0.5 rounded-full" style={{ background: sty.bg, color: sty.color }}>
-                        {d.status}
-                      </span>
-                                    </td>
-                                    <td className="px-4 py-3">
-                                        <div className="flex gap-2 items-center">
-                                            {canShip && d.status !== "납품완료" && (
-                                                <button
-                                                    onClick={() => advanceStatus(d.id)}
-                                                    className="text-xs font-medium px-2.5 py-1 rounded-md transition-colors"
-                                                    style={{ background: d.status === "출고대기" ? "#EFF6FF" : "#F0FDF4", color: d.status === "출고대기" ? "#1D4ED8" : "#166534" }}
-                                                >
-                                                    {d.status === "출고대기" ? "출고 처리" : "납품 완료"}
-                                                </button>
-                                            )}
-                                            {d.status === "납품완료" && (
-                                                <button
-                                                    onClick={() => setDetailItem(d)}
-                                                    className="text-xs font-medium px-2.5 py-1 rounded-md"
-                                                    style={{ background: "#F5F5F5", color: "#666" }}
-                                                >
-                                                    납품서
-                                                </button>
-                                            )}
-                                        </div>
-                                    </td>
-                                </tr>
-                            )
-                        })}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-
-            {/* Detail Modal */}
-            {detailItem && (
-                <div
-                    className="fixed inset-0 z-50 flex items-center justify-center p-4"
-                    style={{ background: "rgba(0,0,0,0.45)" }}
-                    onClick={() => setDetailItem(null)}
-                >
-                    <div
-                        className="bg-white w-full max-w-lg p-8 relative"
-                        style={{ borderRadius: 12 }}
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        <button onClick={() => setDetailItem(null)} className="absolute top-5 right-5 opacity-40 hover:opacity-100">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#333" strokeWidth="2">
-                                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-                            </svg>
-                        </button>
-
-                        {/* Slip header */}
-                        <div className="flex items-center gap-3 mb-6 pb-5" style={{ borderBottom: "2px solid #0B3D91" }}>
-                            <div>
-                                <p style={{ fontFamily: "'Inter', sans-serif", fontWeight: 700, fontSize: 11, color: "#0B3D91", letterSpacing: "0.12em" }}>PHARMLINK</p>
-                                <h3 className="font-bold text-xl" style={{ color: "#1a1a1a" }}>납품확인서</h3>
-                            </div>
-                            <div className="ml-auto text-right">
-                                <p className="text-xs" style={{ color: "#999" }}>주문번호</p>
-                                <p className="font-bold text-sm" style={{ color: "#0B3D91", fontFamily: "'Inter', sans-serif" }}>{detailItem.orderId}</p>
-                            </div>
-                        </div>
-
-                        <div className="space-y-3 text-sm mb-6">
-                            {[
-                                { label: "수신처", value: detailItem.partner },
-                                { label: "의약품", value: detailItem.productName },
-                                { label: "카테고리", value: detailItem.category },
-                                { label: "수량", value: `${detailItem.qty.toLocaleString()} 개` },
-                                { label: "단가", value: `₩${detailItem.unitPrice.toLocaleString()}` },
-                                { label: "합계금액", value: `₩${(detailItem.qty * detailItem.unitPrice).toLocaleString()}` },
-                                { label: "주문일", value: detailItem.orderDate },
-                                { label: "출고일", value: detailItem.shipDate ?? "—" },
-                                { label: "납품완료일", value: detailItem.completeDate ?? "—" },
-                            ].map((row) => (
-                                <div key={row.label} className="flex">
-                                    <span className="w-28 shrink-0 text-xs font-medium" style={{ color: "#999" }}>{row.label}</span>
-                                    <span className="font-medium" style={{ color: "#1a1a1a" }}>{row.value}</span>
-                                </div>
-                            ))}
-                        </div>
-
-                        <div className="flex gap-3 justify-end">
-                            <button onClick={() => setDetailItem(null)} className="px-5 py-2 text-sm font-medium" style={{ border: "1px solid #E5EAF0", borderRadius: 7, color: "#666" }}>닫기</button>
-                            <button className="px-5 py-2 text-sm font-medium flex items-center gap-2" style={{ background: "#0B3D91", color: "white", borderRadius: 7 }}>
-                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" />
-                                </svg>
-                                PDF 출력
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-        </div>
+  /** 9.3 출고 완료 처리 (WAITING → SHIPPED) */
+  const ship = (delivery: DeliveryDetail) => {
+    setDeliveries((prev) =>
+      prev.map((d) =>
+        d.delivery_id === delivery.delivery_id
+          ? { ...d, status: "SHIPPED", shipped_at: new Date().toISOString() }
+          : d,
+      ),
     )
+    setDetail(null)
+  }
+
+  /** 9.4 납품 완료 처리 (SHIPPED → DELIVERED) — 매출이 자동 생성된다 */
+  const complete = (delivery: DeliveryDetail) => {
+    const cost = delivery.items.reduce((sum, i) => sum + i.quantity * Math.round(i.unit_price * 0.7), 0)
+    setDeliveries((prev) =>
+      prev.map((d) =>
+        d.delivery_id === delivery.delivery_id
+          ? { ...d, status: "DELIVERED", delivered_at: new Date().toISOString() }
+          : d,
+      ),
+    )
+    setDetail(null)
+    setNotice(
+      `납품 #${delivery.delivery_id} 완료 · 매출 ${formatMoney(delivery.total_amount)} 기록 (추정 마진 ${formatMoney(delivery.total_amount - cost)})`,
+    )
+  }
+
+  /** 9.5 납품서 PDF — 서버가 PDF binary를 돌려준다. 여기서는 호출 지점만 표시한다 */
+  const downloadDocument = (delivery: DeliveryDetail) => {
+    setNotice(`납품서 PDF는 서버 연동 후 내려받을 수 있습니다. (GET /deliveries/${delivery.delivery_id}/document)`)
+  }
+
+  const chipStyle = (active: boolean) => ({
+    background: active ? "#0B3D91" : "#F0F2F5",
+    color: active ? "white" : "#666",
+  })
+
+  return (
+      <div className="space-y-5">
+        <div className="flex items-center justify-between flex-wrap gap-4">
+          <div>
+            <h2 className="font-semibold text-lg" style={{ color: "#1a1a1a" }}>납품 관리</h2>
+            <p className="text-sm mt-0.5" style={{ color: "#888" }}>
+              출고 대기 → 출고 완료 → 납품 완료 · 납품 완료 시 매출이 자동 생성됩니다
+            </p>
+          </div>
+        </div>
+
+        {notice && (
+            <div
+                className="flex items-center justify-between gap-4 px-5 py-3"
+                style={{ background: "#EFF6FF", border: "1px solid #BFDBFE", borderRadius: 8 }}
+            >
+              <p className="text-sm" style={{ color: "#1D4ED8" }}>{notice}</p>
+              <button onClick={() => setNotice(null)} aria-label="알림 닫기" className="text-sm shrink-0" style={{ color: "#1D4ED8" }}>✕</button>
+            </div>
+        )}
+
+        {/* 상태 요약 */}
+        <div className="grid grid-cols-3 gap-3">
+          {DELIVERY_STATUSES.map((s) => (
+              <div key={s} className="bg-white px-4 py-4" style={{ borderRadius: 8, border: "1px solid #E5EAF0" }}>
+                <p className="text-xs" style={{ color: "#999" }}>{DELIVERY_STATUS_LABELS[s]}</p>
+                <p className="text-2xl font-bold mt-1" style={{ color: DELIVERY_STATUS_TONES[s].color, fontFamily: "'Inter', sans-serif" }}>
+                  {counts[s]}
+                </p>
+              </div>
+          ))}
+        </div>
+
+        {/* 필터 */}
+        <div className="flex flex-wrap items-center gap-2">
+          <button onClick={() => setStatusFilter("전체")} className="px-3 py-1 text-xs font-medium rounded-full" style={chipStyle(statusFilter === "전체")}>
+            전체 ({deliveries.length})
+          </button>
+          {DELIVERY_STATUSES.map((s) => (
+              <button key={s} onClick={() => setStatusFilter(s)} className="px-3 py-1 text-xs font-medium rounded-full" style={chipStyle(statusFilter === s)}>
+                {DELIVERY_STATUS_LABELS[s]} ({counts[s]})
+              </button>
+          ))}
+          <select
+              value={partnerFilter}
+              onChange={(e) => setPartnerFilter(e.target.value === "전체" ? "전체" : Number(e.target.value))}
+              className="ml-auto px-3 py-1.5 text-xs outline-none cursor-pointer"
+              style={{ border: "1px solid #E5EAF0", borderRadius: 7, background: "white" }}
+          >
+            <option value="전체">전체 고객사</option>
+            {CUSTOMERS.map((p) => (
+                <option key={p.partner_id} value={p.partner_id}>{p.name}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* 목록 */}
+        <div className="bg-white" style={{ borderRadius: 8, border: "1px solid #E5EAF0" }}>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+              <tr style={{ background: "#F7F9FC", borderBottom: "1px solid #E5EAF0" }}>
+                {["납품번호", "주문번호", "고객사", "금액", "상태", "출고일시", "납품일시", ""].map((h) => (
+                    <th key={h} className="px-5 py-3 text-left font-medium" style={{ color: "#888", fontSize: 12, whiteSpace: "nowrap" }}>{h}</th>
+                ))}
+              </tr>
+              </thead>
+              <tbody>
+              {filtered.map((d, i) => (
+                  <tr
+                      key={d.delivery_id}
+                      style={{ borderTop: i > 0 ? "1px solid #F3F4F6" : "none" }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = "#FAFAFA")}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = "white")}
+                  >
+                    <td className="px-5 py-4 text-xs font-mono" style={{ color: "#666" }}>#{d.delivery_id}</td>
+                    <td className="px-5 py-4 text-xs font-mono" style={{ color: "#666" }}>{d.order_number}</td>
+                    <td className="px-5 py-4 font-medium" style={{ color: "#1a1a1a" }}>{d.partner_name}</td>
+                    <td className="px-5 py-4 font-medium" style={{ color: "#333", fontFamily: "'Inter', sans-serif" }}>{formatMoney(d.total_amount)}</td>
+                    <td className="px-5 py-4">
+                      <span className="text-xs font-medium px-2.5 py-1 rounded-full" style={DELIVERY_STATUS_TONES[d.status]}>
+                        {DELIVERY_STATUS_LABELS[d.status]}
+                      </span>
+                    </td>
+                    <td className="px-5 py-4 text-xs" style={{ color: "#999", fontFamily: "'Inter', sans-serif" }}>{d.shipped_at ? formatDate(d.shipped_at) : "-"}</td>
+                    <td className="px-5 py-4 text-xs" style={{ color: "#999", fontFamily: "'Inter', sans-serif" }}>{d.delivered_at ? formatDate(d.delivered_at) : "-"}</td>
+                    <td className="px-5 py-4">
+                      <div className="flex gap-3">
+                        <button onClick={() => setDetail(d)} className="text-xs font-medium" style={{ color: "#0B3D91" }}>상세</button>
+                        {canProcess && d.status === "WAITING" && (
+                            <button onClick={() => ship(d)} className="text-xs font-medium" style={{ color: "#1D4ED8" }}>출고 완료</button>
+                        )}
+                        {canProcess && d.status === "SHIPPED" && (
+                            <button onClick={() => complete(d)} className="text-xs font-medium" style={{ color: "#059669" }}>납품 완료</button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+              ))}
+              </tbody>
+            </table>
+          </div>
+          {filtered.length === 0 && (
+              <div className="py-14 text-center text-sm" style={{ color: "#999" }}>조건에 맞는 납품이 없습니다.</div>
+          )}
+        </div>
+
+        {/* 9.2 납품 상세 */}
+        {detail && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.45)" }} onClick={() => setDetail(null)}>
+              <div className="bg-white w-full max-w-2xl p-8 relative" style={{ borderRadius: 12, maxHeight: "90vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+                <button onClick={() => setDetail(null)} aria-label="닫기" className="absolute top-5 right-5 opacity-40 hover:opacity-100">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#333" strokeWidth="2">
+                    <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+
+                <div className="flex items-center gap-3 mb-1">
+                  <h3 className="font-semibold text-lg" style={{ color: "#1a1a1a" }}>납품 #{detail.delivery_id}</h3>
+                  <span className="text-xs font-medium px-2.5 py-1 rounded-full" style={DELIVERY_STATUS_TONES[detail.status]}>
+                    {DELIVERY_STATUS_LABELS[detail.status]}
+                  </span>
+                </div>
+                <p className="text-sm mb-6" style={{ color: "#888" }}>{detail.order_number} · {detail.partner_name}</p>
+
+                <table className="w-full text-sm mb-5">
+                  <thead>
+                  <tr style={{ background: "#F7F9FC" }}>
+                    {["상품", "수량", "판매단가", "금액"].map((h) => (
+                        <th key={h} className="px-3 py-2 text-left font-medium" style={{ color: "#888", fontSize: 11 }}>{h}</th>
+                    ))}
+                  </tr>
+                  </thead>
+                  <tbody>
+                  {detail.items.map((item, i) => (
+                      <tr key={item.item_id} style={{ borderTop: i > 0 ? "1px solid #F3F4F6" : "none" }}>
+                        <td className="px-3 py-2">
+                          <p className="text-sm font-medium" style={{ color: "#1a1a1a" }}>{item.item_name}</p>
+                          <p className="font-mono text-xs" style={{ color: "#aaa" }}>{item.item_code}</p>
+                        </td>
+                        <td className="px-3 py-2 text-sm" style={{ color: "#555", fontFamily: "'Inter', sans-serif" }}>{formatNumber(item.quantity)}</td>
+                        <td className="px-3 py-2 text-sm" style={{ color: "#555", fontFamily: "'Inter', sans-serif" }}>{formatMoney(item.unit_price)}</td>
+                        <td className="px-3 py-2 text-sm font-medium" style={{ color: "#1a1a1a", fontFamily: "'Inter', sans-serif" }}>{formatMoney(item.line_amount)}</td>
+                      </tr>
+                  ))}
+                  </tbody>
+                </table>
+
+                <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm pt-5" style={{ borderTop: "1px solid #F0F0F0" }}>
+                  {[
+                    { label: "총 납품금액", value: formatMoney(detail.total_amount) },
+                    { label: "납품 생성", value: formatDateTime(detail.created_at) },
+                    { label: "출고일시", value: formatDateTime(detail.shipped_at) },
+                    { label: "납품일시", value: formatDateTime(detail.delivered_at) },
+                  ].map((row) => (
+                      <div key={row.label}>
+                        <p className="text-xs" style={{ color: "#999" }}>{row.label}</p>
+                        <p className="mt-0.5" style={{ color: "#333" }}>{row.value}</p>
+                      </div>
+                  ))}
+                </div>
+
+                <div className="flex gap-3 mt-7 justify-end">
+                  <button
+                      onClick={() => downloadDocument(detail)}
+                      className="px-5 py-2 text-sm font-medium"
+                      style={{ border: "1px solid #E5EAF0", borderRadius: 7, color: "#0B3D91" }}
+                  >
+                    납품서 PDF
+                  </button>
+                  {canProcess && detail.status === "WAITING" && (
+                      <button onClick={() => ship(detail)} className="px-5 py-2 text-sm font-medium" style={{ background: "#1D4ED8", color: "white", borderRadius: 7 }}>
+                        출고 완료
+                      </button>
+                  )}
+                  {canProcess && detail.status === "SHIPPED" && (
+                      <button onClick={() => complete(detail)} className="px-5 py-2 text-sm font-medium" style={{ background: "#059669", color: "white", borderRadius: 7 }}>
+                        납품 완료 (매출 생성)
+                      </button>
+                  )}
+                  <button onClick={() => setDetail(null)} className="px-5 py-2 text-sm font-medium" style={{ border: "1px solid #E5EAF0", borderRadius: 7, color: "#666" }}>닫기</button>
+                </div>
+              </div>
+            </div>
+        )}
+      </div>
+  )
 }
