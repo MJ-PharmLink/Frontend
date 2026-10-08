@@ -174,7 +174,7 @@ export default function MarginPage() {
                   <CartesianGrid strokeDasharray="3 3" stroke="#F0F0F0" />
                   <XAxis dataKey="month" tick={{ fontSize: 12, fill: "#999" }} axisLine={false} tickLine={false} />
                   <YAxis domain={[25, 40]} tickFormatter={(v) => `${v}%`} tick={{ fontSize: 11, fill: "#999" }} axisLine={false} tickLine={false} />
-                  <Tooltip formatter={(v: number) => [`${v}%`, "마진율"]} contentStyle={{ fontSize: 12, borderRadius: 6, border: "1px solid #E5EAF0" }} />
+                  <Tooltip formatter={(v) => [`${Number(v ?? 0)}%`, "마진율"]} contentStyle={{ fontSize: 12, borderRadius: 6, border: "1px solid #E5EAF0" }} />
                   <Line type="monotone" dataKey="marginRate" stroke="#7C3AED" strokeWidth={2.5} dot={{ r: 4, fill: "#7C3AED" }} />
                 </LineChart>
               </ResponsiveContainer>
@@ -189,7 +189,7 @@ export default function MarginPage() {
                     <Pie data={pieCategoryData} cx="50%" cy="50%" innerRadius={48} outerRadius={76} paddingAngle={3} dataKey="value">
                       {pieCategoryData.map((entry, index) => <Cell key={index} fill={entry.color} />)}
                     </Pie>
-                    <Tooltip formatter={(v: number, name: string) => [`${v}%`, name]} contentStyle={{ fontSize: 11, borderRadius: 6, border: "1px solid #E5EAF0" }} />
+                    <Tooltip formatter={(v, name) => [`${Number(v ?? 0)}%`, name]} contentStyle={{ fontSize: 11, borderRadius: 6, border: "1px solid #E5EAF0" }} />
                   </PieChart>
                 </ResponsiveContainer>
                 <div className="space-y-2 shrink-0 text-xs">
@@ -219,7 +219,7 @@ export default function MarginPage() {
                 <CartesianGrid strokeDasharray="3 3" stroke="#F0F0F0" />
                 <XAxis dataKey="month" tick={{ fontSize: 12, fill: "#999" }} axisLine={false} tickLine={false} />
                 <YAxis tickFormatter={(v) => fmt(v)} tick={{ fontSize: 11, fill: "#999" }} axisLine={false} tickLine={false} />
-                <Tooltip formatter={(v: number) => [`₩${v.toLocaleString()}`, "누적 마진"]} contentStyle={{ fontSize: 12, borderRadius: 6, border: "1px solid #E5EAF0" }} />
+                <Tooltip formatter={(v) => [`₩${Number(v ?? 0).toLocaleString()}`, "누적 마진"]} contentStyle={{ fontSize: 12, borderRadius: 6, border: "1px solid #E5EAF0" }} />
                 <Area type="monotone" dataKey="cumMargin" stroke="#059669" strokeWidth={2} fill="url(#cumGrad)" />
               </AreaChart>
             </ResponsiveContainer>
