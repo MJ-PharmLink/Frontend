@@ -1,7 +1,15 @@
 import { useState } from "react"
 import type { AuthUser } from "../App"
 import { CATEGORIES, ITEMS as SAMPLE_ITEMS, SUPPLIERS } from "../data/sample"
-import { CATEGORY_COLORS, ITEM_UNITS, formatDate, formatMoney, formatNumber, itemCodePrefix } from "../lib/domain"
+import {
+  ITEM_STATUS_LABELS,
+  ITEM_UNITS,
+  categoryTone,
+  formatDate,
+  formatMoney,
+  formatNumber,
+  itemCodePrefix,
+} from "../lib/domain"
 import type { Category, Item } from "../types/api"
 
 /**
@@ -353,7 +361,7 @@ export function ProductPage({ user }: Props) {
               </thead>
               <tbody className="divide-y divide-gray-200">
               {filteredItems.map((p) => {
-                const catStyle = CATEGORY_COLORS[p.category_name] ?? CATEGORY_COLORS["기타"]
+                const catStyle = categoryTone(p.category_name)
                 return (
                     <tr key={p.item_id} className="hover:bg-gray-50 transition-colors" style={{ opacity: p.is_active ? 1 : 0.55 }}>
                       <td className="px-4 py-3 font-mono text-xs font-semibold text-gray-800">
@@ -390,7 +398,7 @@ export function ProductPage({ user }: Props) {
                                 ? { background: "#DCFCE7", color: "#166534" }
                                 : { background: "#F3F4F6", color: "#6B7280" }}
                         >
-                          {p.is_active ? "판매중" : "단종"}
+                          {ITEM_STATUS_LABELS[p.is_active ? "ACTIVE" : "DISCONTINUED"]}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-center">
@@ -437,7 +445,7 @@ export function ProductPage({ user }: Props) {
                 </thead>
                 <tbody className="divide-y divide-gray-200">
                 {categories.map((c) => {
-                  const tone = CATEGORY_COLORS[c.category_name] ?? CATEGORY_COLORS["기타"]
+                  const tone = categoryTone(c.category_name)
                   const count = items.filter((i) => i.category_id === c.category_id).length
                   return (
                       <tr key={c.category_id} className="hover:bg-gray-50 transition-colors">

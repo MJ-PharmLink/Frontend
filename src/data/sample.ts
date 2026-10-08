@@ -30,7 +30,6 @@ import type {
   PartnerTransaction,
   PurchaseDetail,
   SaleDetail,
-  SaleSummary,
   StockStatus,
   Warehouse,
 } from "../types/api"
@@ -62,7 +61,7 @@ export function daysUntil(dateStr: string): number {
   return Math.round((target - today) / DAY)
 }
 
-export function expiryStatusOf(dateStr: string): ExpiryStatus {
+function expiryStatusOf(dateStr: string): ExpiryStatus {
   const left = daysUntil(dateStr)
   if (left < 0) return "EXPIRED"
   if (left <= EXPIRING_SOON_DAYS) return "EXPIRING_SOON"
@@ -130,7 +129,7 @@ export const PARTNERS: BusinessPartner[] = [
 export const CUSTOMERS = PARTNERS.filter((p) => p.partner_type === "CUSTOMER")
 export const SUPPLIERS = PARTNERS.filter((p) => p.partner_type === "SUPPLIER")
 
-export function partnerName(partnerId: number): string {
+function partnerName(partnerId: number): string {
   return PARTNERS.find((p) => p.partner_id === partnerId)?.name ?? "-"
 }
 
@@ -350,7 +349,7 @@ function buildOrders(): OrderDetail[] {
 
 export const ORDERS: OrderDetail[] = buildOrders()
 
-export function orderOf(orderId: number): OrderDetail | undefined {
+function orderOf(orderId: number): OrderDetail | undefined {
   return ORDERS.find((o) => o.order_id === orderId)
 }
 
@@ -434,8 +433,6 @@ function buildSales(): SaleDetail[] {
 }
 
 export const SALES: SaleDetail[] = buildSales()
-
-export const SALE_SUMMARIES: SaleSummary[] = SALES.map(({ items: _items, order_number: _n, ...rest }) => rest)
 
 /* ────────────────────────────── 매입 ────────────────────────────── */
 
@@ -625,9 +622,4 @@ export function partnerTransactions(partnerId: number): PartnerTransaction[] {
       b.transaction_date.localeCompare(a.transaction_date) ||
       TRANSACTION_ORDER[a.type] - TRANSACTION_ORDER[b.type],
   )
-}
-
-/** 재고 상세를 lots 없이 보여줄 때 쓰는 조회 도우미 */
-export function inventoryOf(inventoryId: number): InventoryDetail | undefined {
-  return INVENTORY_DETAILS.find((i) => i.inventory_id === inventoryId)
 }

@@ -11,12 +11,13 @@ import {
 } from "../data/sample"
 import {
   ADJUSTMENT_REASON_LABELS,
-  CATEGORY_COLORS,
+  ADJUSTMENT_TYPE_LABELS,
   EXPIRY_STATUS_LABELS,
   EXPIRY_STATUS_TONES,
   STOCK_STATUS_LABELS,
   STOCK_STATUS_TONES,
   TRANSACTION_TYPE_LABELS,
+  categoryTone,
   formatDate,
   formatDateTime,
   formatNumber,
@@ -277,7 +278,7 @@ export default function InventoryPage() {
                     <tbody>
                     {filtered.map((inv, i) => {
                       const catName = CATEGORIES.find((c) => c.category_id === ITEM_CATEGORY.get(inv.item_id))?.category_name ?? "기타"
-                      const catStyle = CATEGORY_COLORS[catName] ?? CATEGORY_COLORS["기타"]
+                      const catStyle = categoryTone(catName)
                       const stockTone = STOCK_STATUS_TONES[inv.stock_status]
                       const expiryTone = EXPIRY_STATUS_TONES[inv.expiry_status]
                       const nearest = inv.lots.find((l) => l.quantity > 0 && l.expiry_status !== "EXPIRED")
@@ -561,7 +562,7 @@ export default function InventoryPage() {
                           style={{ border: "1px solid #E5EAF0", borderRadius: 6, background: "white", color: "#333" }}
                       >
                         {ADJUSTMENT_TYPES.map((t) => (
-                            <option key={t} value={t}>{t === "INCREASE" ? "증가" : "감소"}</option>
+                            <option key={t} value={t}>{ADJUSTMENT_TYPE_LABELS[t]}</option>
                         ))}
                       </select>
                     </div>
