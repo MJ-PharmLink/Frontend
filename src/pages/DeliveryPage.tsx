@@ -1,6 +1,7 @@
 import { useState } from "react"
+import { ApiError, deliveriesApi } from "../api"
 import type { AuthUser } from "../App"
-import { CUSTOMERS, DELIVERIES } from "../data/sample"
+import { COMPANY, CUSTOMERS, DELIVERIES, PARTNERS } from "../data/sample"
 import {
   DELIVERY_STATUS_LABELS,
   DELIVERY_STATUS_TONES,
@@ -24,12 +25,92 @@ interface Props {
   user: AuthUser
 }
 
+/** 서버 주소가 있으면 9.5 PDF를 내려받고, 없으면 인쇄 미리보기로 대체한다 */
+const HAS_BACKEND = Boolean(import.meta.env.VITE_API_BASE_URL)
+
+const escapeHtml = (value: string) =>
+  value.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] ?? c)
+
+/**
+ * 명세 9.5의 PDF 포함 항목을 그대로 담은 인쇄용 문서.
+ * 공급자는 회사 정보(13), 공급받는자는 거래처, 그리고 납품번호·주문번호·품목.
+ */
+function openPrintableDocument(delivery: DeliveryDetail) {
+  const partner = PARTNERS.find((p) => p.partner_id === delivery.partner_id)
+  const rows = delivery.items
+    .map(
+      (item) => `<tr>
+        <td>${escapeHtml(item.item_name)}<div class="code">${escapeHtml(item.item_code)}</div></td>
+        <td class="num">${item.quantity.toLocaleString("ko-KR")}</td>
+        <td class="num">${item.unit_price.toLocaleString("ko-KR")}</td>
+        <td class="num">${item.line_amount.toLocaleString("ko-KR")}</td>
+      </tr>`,
+    )
+    .join("")
+
+  const html = `<!doctype html>
+<html lang="ko"><head><meta charset="utf-8" />
+<title>납품서 ${delivery.delivery_id}</title>
+<style>
+  body { font-family: 'Pretendard','Malgun Gothic',sans-serif; color:#222; padding:40px; }
+  h1 { font-size:22px; letter-spacing:.3em; text-align:center; margin:0 0 28px; }
+  .meta { display:flex; justify-content:space-between; font-size:12px; color:#666; margin-bottom:20px; }
+  .parties { display:flex; gap:16px; margin-bottom:24px; }
+  .party { flex:1; border:1px solid #ddd; padding:14px 16px; font-size:12px; line-height:1.9; }
+  .party h2 { font-size:12px; color:#888; margin:0 0 8px; font-weight:600; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th,td { border-bottom:1px solid #e5e5e5; padding:9px 8px; text-align:left; }
+  th { background:#f7f9fc; color:#666; font-weight:600; }
+  .num { text-align:right; font-variant-numeric:tabular-nums; }
+  .code { color:#aaa; font-size:10px; }
+  .total { margin-top:18px; text-align:right; font-size:14px; font-weight:700; }
+  @media print { body { padding:0; } }
+</style></head>
+<body>
+  <h1>납 품 서</h1>
+  <div class="meta">
+    <span>납품번호 ${delivery.delivery_id} · 주문번호 ${escapeHtml(delivery.order_number)}</span>
+    <span>출고일 ${delivery.shipped_at ? delivery.shipped_at.slice(0, 10) : "-"} · 납품일 ${delivery.delivered_at ? delivery.delivered_at.slice(0, 10) : "-"}</span>
+  </div>
+  <div class="parties">
+    <div class="party">
+      <h2>공급자</h2>
+      <div>${escapeHtml(COMPANY.name)}</div>
+      <div>사업자등록번호 ${escapeHtml(COMPANY.business_number)}</div>
+      <div>대표자 ${escapeHtml(COMPANY.representative_name)}</div>
+      <div>${escapeHtml(COMPANY.address)}</div>
+      <div>${escapeHtml(COMPANY.phone)}</div>
+    </div>
+    <div class="party">
+      <h2>공급받는자</h2>
+      <div>${escapeHtml(delivery.partner_name)}</div>
+      <div>사업자등록번호 ${escapeHtml(partner?.business_number ?? "-")}</div>
+      <div>${escapeHtml(partner?.address ?? "-")}</div>
+      <div>${escapeHtml(partner?.phone ?? "-")}</div>
+    </div>
+  </div>
+  <table>
+    <thead><tr><th>상품명</th><th class="num">수량</th><th class="num">판매단가</th><th class="num">품목금액</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <p class="total">총 납품금액 ${delivery.total_amount.toLocaleString("ko-KR")}원</p>
+</body></html>`
+
+  const win = window.open("", "_blank", "width=860,height=1000")
+  if (!win) return
+  win.document.write(html)
+  win.document.close()
+  win.focus()
+  win.print()
+}
+
 export default function DeliveryPage({ user }: Props) {
   const [deliveries, setDeliveries] = useState<DeliveryDetail[]>(DELIVERIES)
   const [statusFilter, setStatusFilter] = useState<DeliveryStatus | "전체">("전체")
   const [partnerFilter, setPartnerFilter] = useState<number | "전체">("전체")
   const [detail, setDetail] = useState<DeliveryDetail | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [downloading, setDownloading] = useState<number | null>(null)
 
   // 9.3 출고 완료와 9.4 납품 완료는 관리자·창고 권한이다
   const canProcess = user.role === "ADMIN" || user.role === "WAREHOUSE"
@@ -74,9 +155,31 @@ export default function DeliveryPage({ user }: Props) {
     )
   }
 
-  /** 9.5 납품서 PDF — 서버가 PDF binary를 돌려준다. 여기서는 호출 지점만 표시한다 */
-  const downloadDocument = (delivery: DeliveryDetail) => {
-    setNotice(`납품서 PDF는 서버 연동 후 내려받을 수 있습니다. (GET /deliveries/${delivery.delivery_id}/document)`)
+  /**
+   * 9.5 납품서 PDF.
+   *
+   * 서버가 PDF binary를 돌려주는 유일한 엔드포인트다. 백엔드 주소가 없을 때는
+   * 같은 내용을 브라우저 인쇄 창으로 띄워 미리 볼 수 있게 한다.
+   */
+  const downloadDocument = async (delivery: DeliveryDetail) => {
+    if (!HAS_BACKEND) {
+      openPrintableDocument(delivery)
+      return
+    }
+    setDownloading(delivery.delivery_id)
+    try {
+      const blob = await deliveriesApi.document(delivery.delivery_id)
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement("a")
+      link.href = url
+      link.download = `delivery-${delivery.delivery_id}.pdf`
+      link.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      setNotice(err instanceof ApiError ? err.message : "납품서를 내려받지 못했습니다.")
+    } finally {
+      setDownloading(null)
+    }
   }
 
   const chipStyle = (active: boolean) => ({
@@ -249,10 +352,11 @@ export default function DeliveryPage({ user }: Props) {
                 <div className="flex gap-3 mt-7 justify-end">
                   <button
                       onClick={() => downloadDocument(detail)}
+                      disabled={downloading === detail.delivery_id}
                       className="px-5 py-2 text-sm font-medium"
                       style={{ border: "1px solid #E5EAF0", borderRadius: 7, color: "#0B3D91" }}
                   >
-                    납품서 PDF
+                    {downloading === detail.delivery_id ? "생성 중..." : "납품서"}
                   </button>
                   {canProcess && detail.status === "WAITING" && (
                       <button onClick={() => ship(detail)} className="px-5 py-2 text-sm font-medium" style={{ background: "#1D4ED8", color: "white", borderRadius: 7 }}>

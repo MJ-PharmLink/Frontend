@@ -1,7 +1,8 @@
 import { useState } from "react"
+import type { AuthUser } from "../App"
 import { CATEGORIES, ITEMS as SAMPLE_ITEMS, SUPPLIERS } from "../data/sample"
-import { CATEGORY_COLORS, ITEM_UNITS, formatMoney, formatNumber, itemCodePrefix } from "../lib/domain"
-import type { Item } from "../types/api"
+import { CATEGORY_COLORS, ITEM_UNITS, formatDate, formatMoney, formatNumber, itemCodePrefix } from "../lib/domain"
+import type { Category, Item } from "../types/api"
 
 /**
  * 6. 상품(의약품) 마스터.
@@ -112,7 +113,21 @@ const selectClass =
 const inputClass =
     "w-full px-3 py-2 text-sm border border-gray-300 rounded-lg outline-none focus:border-blue-500"
 
-export function ProductPage() {
+interface Props {
+  user: AuthUser
+}
+
+type TabKey = "items" | "categories"
+
+const EMPTY_CATEGORY_FORM = { category_name: "", description: "" }
+
+export function ProductPage({ user }: Props) {
+  const [tab, setTab] = useState<TabKey>("items")
+  const [categories, setCategories] = useState<Category[]>(CATEGORIES)
+  const [editingCategory, setEditingCategory] = useState<Category | null>(null)
+  const [showCategoryModal, setShowCategoryModal] = useState(false)
+  const [categoryForm, setCategoryForm] = useState(EMPTY_CATEGORY_FORM)
+  const [categoryError, setCategoryError] = useState<string | null>(null)
   const [items, setItems] = useState<Item[]>(ITEMS)
   const [keyword, setKeyword] = useState("")
   const [categoryFilter, setCategoryFilter] = useState("전체")
@@ -129,7 +144,7 @@ export function ProductPage() {
   })
 
   const categoryName =
-      CATEGORIES.find((c) => c.category_id === form.category_id)?.category_name ?? "기타"
+      categories.find((c) => c.category_id === form.category_id)?.category_name ?? "기타"
   const codePrefix = itemCodePrefix(categoryName)
 
   /**
@@ -137,7 +152,7 @@ export function ProductPage() {
    * 실제 코드는 6.3 등록 응답의 item_code 를 따른다.
    */
   const nextCodeNumber = (categoryId: number) => {
-    const name = CATEGORIES.find((c) => c.category_id === categoryId)?.category_name ?? "기타"
+    const name = categories.find((c) => c.category_id === categoryId)?.category_name ?? "기타"
     const prefix = itemCodePrefix(name)
     const used = items
         .filter((p) => p.item_code.startsWith(prefix))
@@ -158,7 +173,7 @@ export function ProductPage() {
       setForm((prev) => ({ ...prev, category_id: categoryId, code_number: nextCodeNumber(categoryId) }))
 
   const handleSave = () => {
-    const category = CATEGORIES.find((c) => c.category_id === form.category_id)
+    const category = categories.find((c) => c.category_id === form.category_id)
     const supplier = ACTIVE_SUPPLIERS.find((s) => s.partner_id === form.supplier_id)
     const newItem: Item = {
       item_id: Math.max(0, ...items.map((p) => p.item_id)) + 1,
@@ -184,6 +199,56 @@ export function ProductPage() {
   const toggleActive = (itemId: number) =>
       setItems((prev) => prev.map((p) => (p.item_id === itemId ? { ...p, is_active: !p.is_active } : p)))
 
+  // 6.6 카테고리 생성 / 6.7 수정 — 관리자 전용. 상품이 참조하므로 삭제는 없다
+  const canManageCategory = user.role === "ADMIN"
+
+  const openCategoryCreate = () => {
+    setEditingCategory(null)
+    setCategoryForm(EMPTY_CATEGORY_FORM)
+    setCategoryError(null)
+    setShowCategoryModal(true)
+  }
+
+  const openCategoryEdit = (category: Category) => {
+    setEditingCategory(category)
+    setCategoryForm({ category_name: category.category_name, description: category.description ?? "" })
+    setCategoryError(null)
+    setShowCategoryModal(true)
+  }
+
+  const saveCategory = () => {
+    const name = categoryForm.category_name.trim()
+    if (name === "") return setCategoryError("카테고리명은 필수입니다.")
+    if (name.length > 50) return setCategoryError("카테고리명은 최대 50자입니다.")
+    const duplicated = categories.some(
+      (c) => c.category_name === name && c.category_id !== editingCategory?.category_id,
+    )
+    if (duplicated) return setCategoryError("이미 존재하는 카테고리명입니다.")
+
+    const description = categoryForm.description.trim() || null
+    if (editingCategory) {
+      setCategories((prev) =>
+        prev.map((c) =>
+          c.category_id === editingCategory.category_id
+            ? { ...c, category_name: name, description, updated_at: new Date().toISOString() }
+            : c,
+        ),
+      )
+    } else {
+      setCategories((prev) => [
+        ...prev,
+        {
+          category_id: Math.max(0, ...prev.map((c) => c.category_id)) + 1,
+          category_name: name,
+          description,
+          created_at: new Date().toISOString(),
+        },
+      ])
+    }
+    setShowCategoryModal(false)
+    setCategoryError(null)
+  }
+
   return (
       <div className="space-y-6">
         {/* Header */}
@@ -194,15 +259,47 @@ export function ProductPage() {
               등록된 의약품 및 상품 마스터를 조회하고 관리합니다.
             </p>
           </div>
-          <button
-              onClick={openCreate}
-              className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors"
-              style={{ background: "#0B3D91" }}
-          >
-            + 새 상품 등록
-          </button>
+          {tab === "items" ? (
+              <button
+                  onClick={openCreate}
+                  className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors"
+                  style={{ background: "#0B3D91" }}
+              >
+                + 새 상품 등록
+              </button>
+          ) : (
+              canManageCategory && (
+                  <button
+                      onClick={openCategoryCreate}
+                      className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors"
+                      style={{ background: "#0B3D91" }}
+                  >
+                    + 카테고리 생성
+                  </button>
+              )
+          )}
         </div>
 
+        {/* Tabs */}
+        <div className="flex gap-1 p-1 rounded-lg w-fit" style={{ background: "#F0F2F5" }}>
+          {([["items", "상품 목록"], ["categories", "카테고리"]] as const).map(([key, label]) => (
+              <button
+                  key={key}
+                  onClick={() => setTab(key)}
+                  className="px-5 py-1.5 text-sm font-medium rounded-md transition-all duration-150"
+                  style={{
+                    background: tab === key ? "white" : "transparent",
+                    color: tab === key ? "#0B3D91" : "#888",
+                    boxShadow: tab === key ? "0 1px 4px rgba(0,0,0,0.08)" : "none",
+                  }}
+              >
+                {label}
+              </button>
+          ))}
+        </div>
+
+        {tab === "items" && (
+        <>
         {/* Filter / Search Bar */}
         <div className="bg-white p-4 rounded-xl border border-gray-200 flex flex-wrap gap-4 justify-between items-center">
           <div className="flex items-center gap-3 flex-1 min-w-[280px]">
@@ -230,7 +327,7 @@ export function ProductPage() {
                 className="px-3.5 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:border-blue-500"
             >
               <option value="전체">전체 카테고리</option>
-              {CATEGORIES.map((c) => (
+              {categories.map((c) => (
                   <option key={c.category_id} value={c.category_name}>{c.category_name}</option>
               ))}
             </select>
@@ -317,6 +414,104 @@ export function ProductPage() {
               </div>
           )}
         </div>
+        </>
+        )}
+
+        {/* 6.5~6.7 카테고리 */}
+        {tab === "categories" && (
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <div className="px-5 py-4 text-xs" style={{ color: "#888", borderBottom: "1px solid #E5EAF0" }}>
+                상품 코드 접두어는 카테고리로 정해집니다. 상품이 참조하고 있어 카테고리 삭제는 제공되지 않습니다.
+              </div>
+              <table className="w-full text-left text-sm text-gray-600">
+                <thead className="bg-gray-50 text-xs text-gray-500 border-b border-gray-200">
+                <tr>
+                  <th className="px-4 py-3.5 font-semibold">ID</th>
+                  <th className="px-4 py-3.5 font-semibold">카테고리명</th>
+                  <th className="px-4 py-3.5 font-semibold">코드</th>
+                  <th className="px-4 py-3.5 font-semibold">설명</th>
+                  <th className="px-4 py-3.5 font-semibold text-right">상품 수</th>
+                  <th className="px-4 py-3.5 font-semibold">생성일</th>
+                  <th className="px-4 py-3.5 font-semibold"></th>
+                </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200">
+                {categories.map((c) => {
+                  const tone = CATEGORY_COLORS[c.category_name] ?? CATEGORY_COLORS["기타"]
+                  const count = items.filter((i) => i.category_id === c.category_id).length
+                  return (
+                      <tr key={c.category_id} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-4 py-3 text-xs text-gray-400">{c.category_id}</td>
+                        <td className="px-4 py-3">
+                          <span className="inline-block px-2.5 py-1 text-xs font-medium rounded-md" style={{ background: tone.bg, color: tone.color }}>
+                            {c.category_name}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 font-mono text-xs text-gray-500">{itemCodePrefix(c.category_name)}</td>
+                        <td className="px-4 py-3 text-xs text-gray-500">{c.description ?? "-"}</td>
+                        <td className="px-4 py-3 text-right text-gray-700">{count}</td>
+                        <td className="px-4 py-3 text-xs text-gray-400">{formatDate(c.created_at)}</td>
+                        <td className="px-4 py-3 text-right">
+                          {canManageCategory && (
+                              <button onClick={() => openCategoryEdit(c)} className="text-xs font-medium" style={{ color: "#0B3D91" }}>수정</button>
+                          )}
+                        </td>
+                      </tr>
+                  )
+                })}
+                </tbody>
+              </table>
+            </div>
+        )}
+
+        {/* 6.6 / 6.7 카테고리 생성·수정 */}
+        {showCategoryModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.45)" }} onClick={() => setShowCategoryModal(false)}>
+              <div className="bg-white w-full max-w-md p-7 relative rounded-xl" onClick={(e) => e.stopPropagation()}>
+                <button onClick={() => setShowCategoryModal(false)} aria-label="닫기" className="absolute top-5 right-5 opacity-40 hover:opacity-100">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#333" strokeWidth="2">
+                    <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+                <h3 className="font-semibold text-lg mb-1 text-gray-900">
+                  {editingCategory ? "카테고리 수정" : "카테고리 생성"}
+                </h3>
+                <p className="text-sm mb-5" style={{ color: "#888" }}>
+                  {editingCategory
+                      ? "이미 등록된 상품의 코드는 카테고리를 바꿔도 재채번되지 않습니다."
+                      : "초기 5종 외의 카테고리는 상품 코드 접두어로 OT를 사용합니다."}
+                </p>
+
+                {categoryError && (
+                    <p className="mb-4 px-4 py-2.5 text-sm" style={{ background: "#FEF2F2", color: "#DC2626", borderRadius: 6 }}>{categoryError}</p>
+                )}
+
+                <div className="space-y-4">
+                  <Field label="카테고리명">
+                    <input
+                        value={categoryForm.category_name}
+                        onChange={(e) => setCategoryForm((prev) => ({ ...prev, category_name: e.target.value }))}
+                        placeholder="피부과·안과용 의약품"
+                        className={inputClass}
+                    />
+                  </Field>
+                  <Field label="설명">
+                    <input
+                        value={categoryForm.description}
+                        onChange={(e) => setCategoryForm((prev) => ({ ...prev, description: e.target.value.slice(0, 200) }))}
+                        placeholder="연고, 크림, 점안액, 피부 외용제 등"
+                        className={inputClass}
+                    />
+                  </Field>
+                </div>
+
+                <div className="flex gap-3 mt-6 justify-end">
+                  <button onClick={() => setShowCategoryModal(false)} className="px-5 py-2 text-sm font-medium border border-gray-300 rounded-lg text-gray-600">취소</button>
+                  <button onClick={saveCategory} className="px-5 py-2 text-sm font-medium text-white rounded-lg" style={{ background: "#0B3D91" }}>저장</button>
+                </div>
+              </div>
+            </div>
+        )}
 
         {/* 새 상품 등록 모달 */}
         {showModal && (
@@ -364,7 +559,7 @@ export function ProductPage() {
                         onChange={(e) => changeCategory(Number(e.target.value))}
                         className={selectClass}
                     >
-                      {CATEGORIES.map((c) => (
+                      {categories.map((c) => (
                           <option key={c.category_id} value={c.category_id}>{c.category_name}</option>
                       ))}
                     </select>

@@ -13,6 +13,7 @@
 import type {
   BusinessPartner,
   Category,
+  Company,
   DeliveryDetail,
   DeliveryStatus,
   ExpiringLot,
@@ -26,6 +27,7 @@ import type {
   OrderDetail,
   OrderItem,
   OrderStatus,
+  PartnerTransaction,
   PurchaseDetail,
   SaleDetail,
   SaleSummary,
@@ -68,6 +70,20 @@ export function expiryStatusOf(dateStr: string): ExpiryStatus {
 }
 
 /* ────────────────────────────── 기준 정보 ────────────────────────────── */
+
+/** 13. 회사 정보 — 싱글 테넌트라 항상 1건이다 */
+export const COMPANY: Company = {
+  company_id: 1,
+  name: "팜링크약품",
+  business_number: "220-81-12345",
+  representative_name: "김대표",
+  wholesale_license_number: "제2026-서울-00123호",
+  address: "서울시 송파구 올림픽로 300 15층",
+  phone: "02-555-1234",
+  fax: "02-555-1235",
+  email: "contact@pharmlink.co.kr",
+  updated_at: kstDateTime(-30),
+}
 
 export const WAREHOUSES: Warehouse[] = [
   { warehouse_id: 1, name: "본사 창고", location: "서울시 송파구 올림픽로 300", is_default: true },
@@ -543,6 +559,62 @@ function buildTransactions(): InventoryTransaction[] {
 }
 
 export const TRANSACTIONS: InventoryTransaction[] = buildTransactions()
+
+/* ────────────────────────────── 거래처별 거래 이력 ────────────────────────────── */
+
+/** 행 정렬 우선순위 — 시각이 같으면 SALE → PURCHASE → ORDER 순(5.6) */
+const TRANSACTION_ORDER: Record<PartnerTransaction["type"], number> = {
+  SALE: 0,
+  PURCHASE: 1,
+  ORDER: 2,
+}
+
+/**
+ * 5.6 거래처별 거래 이력.
+ * 고객사는 ORDER·SALE, 공급처는 PURCHASE만 발생한다. 취소된 주문도 포함한다.
+ */
+export function partnerTransactions(partnerId: number): PartnerTransaction[] {
+  const rows: PartnerTransaction[] = []
+
+  for (const order of ORDERS.filter((o) => o.partner_id === partnerId)) {
+    rows.push({
+      type: "ORDER",
+      status: order.status,
+      reference_id: order.order_id,
+      reference_number: order.order_number,
+      amount: order.total_amount,
+      transaction_date: order.created_at,
+    })
+  }
+
+  for (const sale of SALES.filter((s) => s.partner_id === partnerId)) {
+    rows.push({
+      type: "SALE",
+      status: null,
+      reference_id: sale.sale_id,
+      reference_number: sale.order_number,
+      amount: sale.sales_amount,
+      transaction_date: `${sale.sale_date}T09:00:00Z`,
+    })
+  }
+
+  for (const purchase of PURCHASES.filter((p) => p.partner_id === partnerId)) {
+    rows.push({
+      type: "PURCHASE",
+      status: null,
+      reference_id: purchase.purchase_id,
+      reference_number: null,
+      amount: purchase.total_amount,
+      transaction_date: purchase.created_at,
+    })
+  }
+
+  return rows.sort(
+    (a, b) =>
+      b.transaction_date.localeCompare(a.transaction_date) ||
+      TRANSACTION_ORDER[a.type] - TRANSACTION_ORDER[b.type],
+  )
+}
 
 /** 재고 상세를 lots 없이 보여줄 때 쓰는 조회 도우미 */
 export function inventoryOf(inventoryId: number): InventoryDetail | undefined {

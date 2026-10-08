@@ -122,6 +122,20 @@ const NAV_ITEMS: NavItem[] = [
         ),
     },
     {
+        id: "company",
+        label: "회사 정보",
+        roles: ["ADMIN", "SALES", "WAREHOUSE"],
+        icon: (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 21h18" />
+                <path d="M5 21V7l7-4 7 4v14" />
+                <path d="M9 21v-6h6v6" />
+                <line x1="9" y1="10" x2="9.01" y2="10" />
+                <line x1="15" y1="10" x2="15.01" y2="10" />
+            </svg>
+        ),
+    },
+    {
         id: "users",
         label: "사용자 관리",
         roles: ["ADMIN"],

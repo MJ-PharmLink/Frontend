@@ -12,6 +12,7 @@ import DeliveryPage from './pages/DeliveryPage'
 import PurchasePage from './pages/PurchasePage'
 import SalesPage from './pages/SalesPage'
 import UsersPage from './pages/UsersPage'
+import CompanyPage from './pages/CompanyPage'
 
 import type { AuthUser } from "./types/api"
 
@@ -30,6 +31,7 @@ export type AdminRoute =
     | "purchase"
     | "sales"
     | "users"
+    | "company"
 
 export type AppRoute = "home" | "login" | AdminRoute
 
@@ -86,7 +88,7 @@ export default function App() {
       >
         {adminRoute === "dashboard" && <DashboardPage user={user} onNavigate={(r) => setRoute(r)} />}
         {adminRoute === "partners" && <PartnerPage />}
-        {adminRoute === "products" && <ProductPage />}
+        {adminRoute === "products" && <ProductPage user={user} />}
         {adminRoute === "inventory" && <InventoryPage />}
         {adminRoute === "orders" && <OrderPage user={user} />}
         {adminRoute === "margin" && <MarginPage />}
@@ -94,6 +96,7 @@ export default function App() {
         {adminRoute === "purchase" && <PurchasePage />}
         {adminRoute === "sales" && <SalesPage />}
         {adminRoute === "users" && <UsersPage />}
+        {adminRoute === "company" && <CompanyPage user={user} />}
       </AdminLayout>
   )
 }

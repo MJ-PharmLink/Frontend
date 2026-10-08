@@ -1,7 +1,23 @@
 import { useState } from "react"
-import { PARTNER_TYPE_LABELS, PARTNER_TYPE_TONES } from "../lib/domain"
+import { PARTNERS, partnerTransactions } from "../data/sample"
+import {
+  ORDER_STATUS_LABELS,
+  ORDER_STATUS_TONES,
+  PARTNER_TRANSACTION_LABELS,
+  PARTNER_TYPE_LABELS,
+  PARTNER_TYPE_TONES,
+  formatDateTime,
+  formatMoney,
+} from "../lib/domain"
 import { PARTNER_TYPES } from "../types/api"
 import type { BusinessPartner, PartnerType } from "../types/api"
+
+/** 거래 이력 행 배지 색 */
+const TRANSACTION_TONES = {
+  ORDER: { bg: "#EFF6FF", color: "#1D4ED8" },
+  SALE: { bg: "#DCFCE7", color: "#166534" },
+  PURCHASE: { bg: "#FFF7ED", color: "#9A3412" },
+} as const
 
 /**
  * 5. 거래처 관리.
@@ -11,34 +27,6 @@ import type { BusinessPartner, PartnerType } from "../types/api"
  * 없다. 누적 거래액과 최근 거래일이 필요하면 5.6 거래처별 거래 이력에서 가져온다.
  */
 
-const SAMPLE_PARTNERS: BusinessPartner[] = [
-  // ── 고객사 ──
-  { partner_id: 1, partner_type: "CUSTOMER", name: "새봄약국", business_number: "123-45-67890", phone: "02-1234-5678", address: "서울 마포구 양화로 12", manager_name: "김약사", is_active: true },
-  { partner_id: 2, partner_type: "CUSTOMER", name: "라온종합병원", business_number: "124-86-10234", phone: "02-2258-5000", address: "서울 서초구 반포대로 222", manager_name: "이구매", is_active: true },
-  { partner_id: 3, partner_type: "CUSTOMER", name: "다온메디유통", business_number: "128-81-55234", phone: "031-456-7890", address: "경기 고양시 덕양구 화정로 100", manager_name: "박대리", is_active: true },
-  { partner_id: 4, partner_type: "CUSTOMER", name: "푸른길약국", business_number: "211-09-33451", phone: "02-555-1234", address: "서울 강남구 테헤란로 55", manager_name: "최약사", is_active: true },
-  { partner_id: 5, partner_type: "CUSTOMER", name: "해솔메디컬센터", business_number: "602-81-77120", phone: "051-123-4567", address: "부산 해운대구 해운대로 15", manager_name: "정팀장", is_active: false },
-  { partner_id: 6, partner_type: "CUSTOMER", name: "한빛대학병원", business_number: "129-82-44510", phone: "031-787-7000", address: "경기 성남시 분당구 구미로 173", manager_name: "한구매팀", is_active: true },
-  { partner_id: 7, partner_type: "CUSTOMER", name: "별하약국", business_number: "110-23-88190", phone: "02-362-8800", address: "서울 서대문구 이화여대길 33", manager_name: "이약사", is_active: true },
-  { partner_id: 8, partner_type: "CUSTOMER", name: "케이메드유통", business_number: "204-81-62330", phone: "02-966-5500", address: "서울 동대문구 왕산로 40", manager_name: "조부장", is_active: true },
-  { partner_id: 9, partner_type: "CUSTOMER", name: "수원온병원", business_number: "135-82-19047", phone: "031-219-5000", address: "경기 수원시 영통구 월드컵로 164", manager_name: "강구매", is_active: true },
-  { partner_id: 10, partner_type: "CUSTOMER", name: "바다약국", business_number: "601-11-25874", phone: "051-241-3300", address: "부산 중구 중앙대로 67", manager_name: "윤약사", is_active: true },
-  { partner_id: 11, partner_type: "CUSTOMER", name: "늘봄병원", business_number: "305-82-30118", phone: "042-220-8000", address: "대전 중구 목중로 29", manager_name: "오팀장", is_active: false },
-  { partner_id: 12, partner_type: "CUSTOMER", name: "유니온헬스유통", business_number: "119-81-70925", phone: "02-3452-7700", address: "서울 금천구 가산디지털1로 165", manager_name: "문대리", is_active: true },
-
-  // ── 공급처 ──
-  { partner_id: 13, partner_type: "SUPPLIER", name: "아진바이오", business_number: "107-81-12345", phone: "02-8888-1234", address: "서울 영등포구 여의도동 25", manager_name: "오과장", is_active: true },
-  { partner_id: 14, partner_type: "SUPPLIER", name: "메디코어제약", business_number: "220-81-83158", phone: "02-550-8100", address: "서울 강남구 삼성동 167", manager_name: "신부장", is_active: true },
-  { partner_id: 15, partner_type: "SUPPLIER", name: "세움파마", business_number: "108-81-02290", phone: "02-828-0114", address: "서울 동작구 노량진로 74", manager_name: "권차장", is_active: true },
-  { partner_id: 16, partner_type: "SUPPLIER", name: "한결제약", business_number: "101-81-06192", phone: "02-2194-0114", address: "서울 종로구 새문안로 5길 32", manager_name: "임과장", is_active: true },
-  { partner_id: 17, partner_type: "SUPPLIER", name: "이노젠파마", business_number: "211-81-29774", phone: "02-480-3300", address: "서울 강남구 역삼로 514", manager_name: "남팀장", is_active: true },
-  { partner_id: 18, partner_type: "SUPPLIER", name: "노바헬스코리아", business_number: "106-81-51510", phone: "02-2094-1114", address: "서울 용산구 한강대로 92", manager_name: "엄부장", is_active: true },
-  { partner_id: 19, partner_type: "SUPPLIER", name: "그린셀제약", business_number: "135-81-11891", phone: "031-260-9114", address: "경기 용인시 기흥구 이현로 30", manager_name: "심차장", is_active: true },
-  { partner_id: 20, partner_type: "SUPPLIER", name: "다온메디텍", business_number: "201-81-02355", phone: "02-6477-3114", address: "서울 서초구 신반포로 177", manager_name: "서과장", is_active: true },
-  { partner_id: 21, partner_type: "SUPPLIER", name: "유니랩제약", business_number: "124-81-00998", phone: "031-580-7114", address: "경기 화성시 향남읍 향남로 641", manager_name: "류팀장", is_active: true },
-  { partner_id: 22, partner_type: "SUPPLIER", name: "태성바이오", business_number: "109-81-37258", phone: "02-820-0114", address: "서울 강서구 양천로 583", manager_name: "안대리", is_active: false },
-  { partner_id: 23, partner_type: "SUPPLIER", name: "웰니스팜", business_number: "101-86-41800", phone: "02-2194-1300", address: "서울 종로구 새문안로 5가길 28", manager_name: "배과장", is_active: true },
-]
 
 const TYPE_TABS = [
   { key: "all", label: "전체" },
@@ -75,8 +63,85 @@ const EMPTY_FORM = {
   manager_name: "",
 }
 
+/**
+ * 5.6 거래처별 거래 이력.
+ * 고객사는 주문·매출, 공급처는 매입만 발생한다. 취소된 주문도 포함된다.
+ */
+function PartnerTransactions({ partnerId }: { partnerId: number }) {
+  const rows = partnerTransactions(partnerId)
+
+  // 누적 거래액은 거래처 필드가 아니라 이 이력에서 집계한다
+  const totals = rows.reduce(
+    (acc, row) => {
+      if (row.type === "SALE") acc.sale += row.amount
+      if (row.type === "PURCHASE") acc.purchase += row.amount
+      return acc
+    },
+    { sale: 0, purchase: 0 },
+  )
+  const lastDate = rows[0]?.transaction_date ?? null
+
+  return (
+      <div>
+        <div className="grid grid-cols-3 gap-3 mb-5">
+          {[
+            { label: "누적 매출액", value: formatMoney(totals.sale) },
+            { label: "누적 매입액", value: formatMoney(totals.purchase) },
+            { label: "최근 거래", value: lastDate ? formatDateTime(lastDate) : "-" },
+          ].map((s) => (
+              <div key={s.label} className="px-4 py-3" style={{ background: "#F7F9FC", borderRadius: 8 }}>
+                <p className="text-xs" style={{ color: "#999" }}>{s.label}</p>
+                <p className="text-sm font-semibold mt-0.5" style={{ color: "#1a1a1a", fontFamily: "'Inter', sans-serif" }}>{s.value}</p>
+              </div>
+          ))}
+        </div>
+
+        {rows.length === 0 ? (
+            <p className="py-12 text-center text-sm" style={{ color: "#999" }}>거래 이력이 없습니다.</p>
+        ) : (
+            <div style={{ maxHeight: 320, overflowY: "auto" }}>
+              <table className="w-full text-sm">
+                <thead>
+                <tr style={{ background: "#F7F9FC" }}>
+                  {["구분", "참조", "상태", "금액", "일시"].map((h) => (
+                      <th key={h} className="px-3 py-2 text-left font-medium" style={{ color: "#888", fontSize: 11, position: "sticky", top: 0, background: "#F7F9FC" }}>{h}</th>
+                  ))}
+                </tr>
+                </thead>
+                <tbody>
+                {rows.map((row, i) => (
+                    <tr key={`${row.type}-${row.reference_id}`} style={{ borderTop: i > 0 ? "1px solid #F3F4F6" : "none" }}>
+                      <td className="px-3 py-2">
+                        <span className="text-xs font-medium px-2 py-0.5 rounded-full" style={TRANSACTION_TONES[row.type]}>
+                          {PARTNER_TRANSACTION_LABELS[row.type]}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 font-mono text-xs" style={{ color: "#666" }}>
+                        {row.reference_number ?? `#${row.reference_id}`}
+                      </td>
+                      <td className="px-3 py-2">
+                        {row.status ? (
+                            <span className="text-xs font-medium px-2 py-0.5 rounded-full" style={ORDER_STATUS_TONES[row.status]}>
+                              {ORDER_STATUS_LABELS[row.status]}
+                            </span>
+                        ) : (
+                            <span className="text-xs" style={{ color: "#ccc" }}>-</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-sm font-medium" style={{ color: "#333", fontFamily: "'Inter', sans-serif" }}>{formatMoney(row.amount)}</td>
+                      <td className="px-3 py-2 text-xs" style={{ color: "#999", fontFamily: "'Inter', sans-serif" }}>{formatDateTime(row.transaction_date)}</td>
+                    </tr>
+                ))}
+                </tbody>
+              </table>
+            </div>
+        )}
+      </div>
+  )
+}
+
 export default function PartnerPage() {
-  const [partners, setPartners] = useState<BusinessPartner[]>(SAMPLE_PARTNERS)
+  const [partners, setPartners] = useState<BusinessPartner[]>(PARTNERS)
   const [tab, setTab] = useState<TabKey>("all")
   const [sort, setSort] = useState<SortKey>("default")
   const [sortMenu, setSortMenu] = useState<TabKey | null>(null)
@@ -84,6 +149,7 @@ export default function PartnerPage() {
   const [selected, setSelected] = useState<BusinessPartner | null>(null)
   const [showModal, setShowModal] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [modalTab, setModalTab] = useState<"info" | "transactions">("info")
   const [form, setForm] = useState(EMPTY_FORM)
   const [verificationStatus, setVerificationStatus] = useState<"idle" | "success" | "error">("idle")
 
@@ -129,6 +195,7 @@ export default function PartnerPage() {
     )
     setVerificationStatus("idle")
     setConfirmDelete(false)
+    setModalTab("info")
     setShowModal(true)
   }
 
@@ -382,11 +449,34 @@ export default function PartnerPage() {
                     <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
                   </svg>
                 </button>
-                <h3 className="font-semibold text-lg mb-6" style={{ color: "#1a1a1a" }}>
+                <h3 className="font-semibold text-lg mb-4" style={{ color: "#1a1a1a" }}>
                   {selected ? "거래처 상세" : "거래처 등록"}
                 </h3>
 
-                <div className="space-y-4">
+                {selected && (
+                    <div className="flex gap-1 p-1 rounded-lg w-fit mb-5" style={{ background: "#F0F2F5" }}>
+                      {([["info", "기본 정보"], ["transactions", "거래 이력"]] as const).map(([key, label]) => (
+                          <button
+                              key={key}
+                              onClick={() => setModalTab(key)}
+                              className="px-4 py-1.5 text-sm font-medium rounded-md transition-all duration-150"
+                              style={{
+                                background: modalTab === key ? "white" : "transparent",
+                                color: modalTab === key ? "#0B3D91" : "#888",
+                                boxShadow: modalTab === key ? "0 1px 4px rgba(0,0,0,0.08)" : "none",
+                              }}
+                          >
+                            {label}
+                          </button>
+                      ))}
+                    </div>
+                )}
+
+                {selected && modalTab === "transactions" && (
+                    <PartnerTransactions partnerId={selected.partner_id} />
+                )}
+
+                <div className="space-y-4" style={{ display: selected && modalTab === "transactions" ? "none" : undefined }}>
                   <div className="flex items-center gap-4">
                     <label className="text-sm font-medium w-24 shrink-0" style={{ color: "#666" }}>거래처명</label>
                     <input
@@ -492,7 +582,13 @@ export default function PartnerPage() {
                   </div>
                 </div>
 
-                {confirmDelete ? (
+                {selected && modalTab === "transactions" ? (
+                    <div className="flex justify-end mt-7">
+                      <button onClick={closeModal} className="px-5 py-2 text-sm font-medium" style={{ border: "1px solid #E5EAF0", borderRadius: 7, color: "#666" }}>
+                        닫기
+                      </button>
+                    </div>
+                ) : confirmDelete ? (
                     <div
                         className="flex items-center justify-between gap-4 mt-8 px-4 py-3"
                         style={{ background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 8 }}
