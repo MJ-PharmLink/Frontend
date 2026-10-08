@@ -31,9 +31,21 @@ const INITIAL_USERS: SysUser[] = [
 
 const EMPTY_FORM = { username: "", name: "", email: "", role: "sales" as UserRole, password: "" }
 
+const SORT_OPTIONS = [
+    { key: "default", label: "기본 (ID순)" },
+    { key: "active", label: "활성화 우선" },
+    { key: "inactive", label: "비활성화 우선" },
+] as const
+
+type SortKey = (typeof SORT_OPTIONS)[number]["key"]
+
+const ROLE_FILTERS = ["전체", "admin", "sales", "warehouse"] as const
+
 export default function UsersPage() {
     const [users, setUsers] = useState<SysUser[]>(INITIAL_USERS)
     const [roleFilter, setRoleFilter] = useState<string>("전체")
+    const [sort, setSort] = useState<SortKey>("default")
+    const [sortMenu, setSortMenu] = useState<string | null>(null)
     const [search, setSearch] = useState("")
     const [showModal, setShowModal] = useState(false)
     const [editUser, setEditUser] = useState<SysUser | null>(null)
@@ -44,6 +56,17 @@ export default function UsersPage() {
         const matchSearch =
             u.name.includes(search) || u.username.includes(search) || u.email.includes(search)
         return matchRole && matchSearch
+    })
+
+    const sorted = [...filtered].sort((a, b) => {
+        switch (sort) {
+            case "active":
+                return (a.isActive ? 0 : 1) - (b.isActive ? 0 : 1)
+            case "inactive":
+                return (a.isActive ? 1 : 0) - (b.isActive ? 1 : 0)
+            default:
+                return a.id - b.id
+        }
     })
 
     const openCreate = () => {
@@ -128,18 +151,80 @@ export default function UsersPage() {
             {/* Filters */}
             <div className="flex flex-wrap gap-3 items-center">
                 <div className="flex gap-2">
-                    {["전체", "admin", "sales", "warehouse"].map((r) => (
-                        <button
-                            key={r}
-                            onClick={() => setRoleFilter(r)}
-                            className="px-3 py-1.5 text-xs font-medium rounded-full transition-all duration-150"
-                            style={{
-                                background: roleFilter === r ? "#0B3D91" : "#F0F2F5",
-                                color: roleFilter === r ? "white" : "#666",
-                            }}
-                        >
-                            {r === "전체" ? "전체" : ROLE_LABELS[r]}
-                        </button>
+                    {ROLE_FILTERS.map((r) => (
+                        <div key={r} className="relative">
+                            <button
+                                onClick={() => {
+                                    setRoleFilter(r)
+                                    setSortMenu(sortMenu === r ? null : r)
+                                }}
+                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full transition-all duration-150"
+                                style={{
+                                    background: roleFilter === r ? "#0B3D91" : "#F0F2F5",
+                                    color: roleFilter === r ? "white" : "#666",
+                                }}
+                            >
+                                {r === "전체" ? "전체" : ROLE_LABELS[r]}
+                                <svg
+                                    width="9"
+                                    height="9"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="3"
+                                    style={{
+                                        transform: sortMenu === r ? "rotate(180deg)" : "none",
+                                        transition: "transform 150ms",
+                                    }}
+                                >
+                                    <polyline points="6 9 12 15 18 9" />
+                                </svg>
+                            </button>
+
+                            {sortMenu === r && (
+                                <>
+                                    <div className="fixed inset-0 z-40" onClick={() => setSortMenu(null)} />
+                                    <div
+                                        className="absolute left-0 top-full mt-2 z-50 py-1.5 bg-white"
+                                        style={{
+                                            minWidth: 170,
+                                            borderRadius: 8,
+                                            border: "1px solid #E5EAF0",
+                                            boxShadow: "0 6px 20px rgba(0,0,0,0.10)",
+                                        }}
+                                    >
+                                        <div className="px-3 pt-1 pb-2 text-xs font-medium" style={{ color: "#999" }}>
+                                            정렬 기준
+                                        </div>
+                                        {SORT_OPTIONS.map((o) => (
+                                            <button
+                                                key={o.key}
+                                                onClick={() => {
+                                                    setSort(o.key)
+                                                    setSortMenu(null)
+                                                }}
+                                                className="flex items-center justify-between w-full gap-4 px-3 py-2 text-xs text-left transition-colors"
+                                                style={{
+                                                    color: sort === o.key ? "#0B3D91" : "#555",
+                                                    fontWeight: sort === o.key ? 600 : 400,
+                                                    background: "transparent",
+                                                    whiteSpace: "nowrap",
+                                                }}
+                                                onMouseEnter={(e) => (e.currentTarget.style.background = "#F7F9FC")}
+                                                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                                            >
+                                                {o.label}
+                                                {sort === o.key && (
+                                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#0B3D91" strokeWidth="3">
+                                                        <polyline points="20 6 9 17 4 12" />
+                                                    </svg>
+                                                )}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </>
+                            )}
+                        </div>
                     ))}
                 </div>
                 <div className="relative">
@@ -154,7 +239,9 @@ export default function UsersPage() {
                         style={{ border: "1px solid #E5EAF0", borderRadius: 7, background: "white", minWidth: 220 }}
                     />
                 </div>
-                <span className="text-xs" style={{ color: "#999" }}>{filtered.length}명</span>
+                <span className="text-xs" style={{ color: "#999" }}>
+                    {filtered.length}명 · 정렬: {SORT_OPTIONS.find((o) => o.key === sort)?.label}
+                </span>
             </div>
 
             {/* Table */}
@@ -169,7 +256,7 @@ export default function UsersPage() {
                         </tr>
                         </thead>
                         <tbody>
-                        {filtered.map((u, i) => {
+                        {sorted.map((u, i) => {
                             const rc = ROLE_COLORS[u.role]
                             return (
                                 <tr
