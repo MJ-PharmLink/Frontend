@@ -2,11 +2,16 @@ import { useState } from "react"
 
 type PartnerType = "customer" | "supplier"
 
+const CATEGORIES = ["병원", "제조사", "수입사", "도매상", "약국"] as const
+type Category = (typeof CATEGORIES)[number]
+
+const PARTNER_TYPES = ["고객사", "공급처"] as const
+
 interface Partner {
   id: string
   name: string
   type: "고객사" | "공급처"
-  category: string
+  category: Category
   contact: string
   phone: string
   email: string
@@ -53,17 +58,80 @@ const typeTab = [
 
 type TabKey = "all" | PartnerType
 
+const SORT_OPTIONS = [
+  { key: "default", label: "기본 (코드순)" },
+  { key: "active", label: "활성화 우선" },
+  { key: "inactive", label: "비활성화 우선" },
+  { key: "tradeDesc", label: "누적 거래액 높은순" },
+  { key: "tradeAsc", label: "누적 거래액 낮은순" },
+  { key: "name", label: "거래처명 가나다순" },
+  { key: "recent", label: "마지막 거래 최신순" },
+] as const
+
+type SortKey = (typeof SORT_OPTIONS)[number]["key"]
+
 export default function PartnerPage() {
+  const [partners, setPartners] = useState<Partner[]>(SAMPLE_PARTNERS)
   const [tab, setTab] = useState<TabKey>("all")
+  const [sort, setSort] = useState<SortKey>("default")
+  const [sortMenu, setSortMenu] = useState<TabKey | null>(null)
   const [search, setSearch] = useState("")
   const [selected, setSelected] = useState<Partner | null>(null)
   const [showModal, setShowModal] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
-  const filtered = SAMPLE_PARTNERS.filter((p) => {
+  const openModal = (p: Partner | null) => {
+    setSelected(p)
+    setConfirmDelete(false)
+    setShowModal(true)
+  }
+
+  const closeModal = () => {
+    setShowModal(false)
+    setConfirmDelete(false)
+  }
+
+  const handleDelete = () => {
+    if (!selected) return
+    setPartners((prev) => prev.filter((p) => p.id !== selected.id))
+    setSelected(null)
+    closeModal()
+  }
+
+  const filtered = partners.filter((p) => {
     const matchTab = tab === "all" || (tab === "customer" ? p.type === "고객사" : p.type === "공급처")
     const matchSearch = p.name.includes(search) || p.contact.includes(search) || p.category.includes(search)
     return matchTab && matchSearch
   })
+
+  const sorted = [...filtered].sort((a, b) => {
+    switch (sort) {
+      case "active":
+        return (a.status === "활성" ? 0 : 1) - (b.status === "활성" ? 0 : 1)
+      case "inactive":
+        return (a.status === "비활성" ? 0 : 1) - (b.status === "비활성" ? 0 : 1)
+      case "tradeDesc":
+        return b.totalTrade - a.totalTrade
+      case "tradeAsc":
+        return a.totalTrade - b.totalTrade
+      case "name":
+        return a.name.localeCompare(b.name, "ko")
+      case "recent":
+        return b.lastTrade.localeCompare(a.lastTrade)
+      default:
+        return a.id.localeCompare(b.id)
+    }
+  })
+
+  const fields: { label: string; value: string; options?: readonly string[] }[] = [
+    { label: "거래처명", value: selected?.name ?? "" },
+    { label: "구분", value: selected?.type ?? PARTNER_TYPES[0], options: PARTNER_TYPES },
+    { label: "분류", value: selected?.category ?? CATEGORIES[0], options: CATEGORIES },
+    { label: "담당자", value: selected?.contact ?? "" },
+    { label: "연락처", value: selected?.phone ?? "" },
+    { label: "이메일", value: selected?.email ?? "" },
+    { label: "주소", value: selected?.address ?? "" },
+  ]
 
   return (
     <div className="space-y-5">
@@ -73,7 +141,7 @@ export default function PartnerPage() {
           <p className="text-sm mt-0.5" style={{ color: "#888" }}>고객사 및 공급처 등록·조회·수정</p>
         </div>
         <button
-          onClick={() => { setSelected(null); setShowModal(true) }}
+          onClick={() => openModal(null)}
           className="flex items-center gap-2 px-4 py-2 text-sm font-medium transition-colors duration-150"
           style={{ background: "#0B3D91", color: "white", borderRadius: 7 }}
           onMouseEnter={(e) => (e.currentTarget.style.background = "#0a3280")}
@@ -88,21 +156,88 @@ export default function PartnerPage() {
 
       {/* Tabs + Search */}
       <div className="flex items-center justify-between flex-wrap gap-4">
-        <div className="flex gap-1 p-1 rounded-lg" style={{ background: "#F0F2F5" }}>
-          {typeTab.map((t) => (
-            <button
-              key={t.key}
-              onClick={() => setTab(t.key)}
-              className="px-4 py-1.5 text-sm font-medium rounded-md transition-all duration-150"
-              style={{
-                background: tab === t.key ? "white" : "transparent",
-                color: tab === t.key ? "#0B3D91" : "#888",
-                boxShadow: tab === t.key ? "0 1px 4px rgba(0,0,0,0.08)" : "none",
-              }}
-            >
-              {t.label}
-            </button>
-          ))}
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex gap-1 p-1 rounded-lg" style={{ background: "#F0F2F5" }}>
+            {typeTab.map((t) => (
+              <div key={t.key} className="relative">
+                <button
+                  onClick={() => {
+                    setTab(t.key)
+                    setSortMenu(sortMenu === t.key ? null : t.key)
+                  }}
+                  className="flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium rounded-md transition-all duration-150"
+                  style={{
+                    background: tab === t.key ? "white" : "transparent",
+                    color: tab === t.key ? "#0B3D91" : "#888",
+                    boxShadow: tab === t.key ? "0 1px 4px rgba(0,0,0,0.08)" : "none",
+                  }}
+                >
+                  {t.label}
+                  <svg
+                    width="10"
+                    height="10"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="3"
+                    style={{
+                      transform: sortMenu === t.key ? "rotate(180deg)" : "none",
+                      transition: "transform 150ms",
+                    }}
+                  >
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
+                </button>
+
+                {sortMenu === t.key && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setSortMenu(null)} />
+                    <div
+                      className="absolute left-0 top-full mt-2 z-50 py-1.5 bg-white"
+                      style={{
+                        minWidth: 200,
+                        borderRadius: 8,
+                        border: "1px solid #E5EAF0",
+                        boxShadow: "0 6px 20px rgba(0,0,0,0.10)",
+                      }}
+                    >
+                      <div className="px-3 pt-1 pb-2 text-xs font-medium" style={{ color: "#999" }}>
+                        정렬 기준
+                      </div>
+                      {SORT_OPTIONS.map((o) => (
+                        <button
+                          key={o.key}
+                          onClick={() => {
+                            setSort(o.key)
+                            setSortMenu(null)
+                          }}
+                          className="flex items-center justify-between w-full gap-4 px-3 py-2 text-sm text-left transition-colors"
+                          style={{
+                            color: sort === o.key ? "#0B3D91" : "#555",
+                            fontWeight: sort === o.key ? 600 : 400,
+                            background: "transparent",
+                            whiteSpace: "nowrap",
+                          }}
+                          onMouseEnter={(e) => (e.currentTarget.style.background = "#F7F9FC")}
+                          onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                        >
+                          {o.label}
+                          {sort === o.key && (
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#0B3D91" strokeWidth="3">
+                              <polyline points="20 6 9 17 4 12" />
+                            </svg>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+          <span className="text-xs" style={{ color: "#999" }}>
+            정렬: {SORT_OPTIONS.find((o) => o.key === sort)?.label}
+          </span>
         </div>
         <input
           value={search}
@@ -125,7 +260,7 @@ export default function PartnerPage() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((p, i) => (
+              {sorted.map((p, i) => (
                 <tr
                   key={p.id}
                   style={{ borderTop: i > 0 ? "1px solid #F3F4F6" : "none" }}
@@ -157,7 +292,7 @@ export default function PartnerPage() {
                   </td>
                   <td className="px-5 py-4">
                     <button
-                      onClick={() => { setSelected(p); setShowModal(true) }}
+                      onClick={() => openModal(p)}
                       className="text-xs font-medium transition-colors"
                       style={{ color: "#0B3D91" }}
                     >
@@ -169,6 +304,11 @@ export default function PartnerPage() {
             </tbody>
           </table>
         </div>
+        {sorted.length === 0 && (
+          <div className="py-14 text-center text-sm" style={{ color: "#999" }}>
+            조건에 맞는 거래처가 없습니다.
+          </div>
+        )}
       </div>
 
       {/* Simple Detail Modal */}
@@ -176,7 +316,7 @@ export default function PartnerPage() {
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
           style={{ background: "rgba(0,0,0,0.45)" }}
-          onClick={() => setShowModal(false)}
+          onClick={closeModal}
         >
           <div
             className="bg-white w-full max-w-lg p-8 relative"
@@ -184,7 +324,7 @@ export default function PartnerPage() {
             onClick={(e) => e.stopPropagation()}
           >
             <button
-              onClick={() => setShowModal(false)}
+              onClick={closeModal}
               className="absolute top-5 right-5 opacity-40 hover:opacity-100 transition-opacity"
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#333" strokeWidth="2">
@@ -195,33 +335,82 @@ export default function PartnerPage() {
               {selected ? "거래처 상세" : "거래처 등록"}
             </h3>
             <div className="space-y-4">
-              {[
-                { label: "거래처명", value: selected?.name ?? "" },
-                { label: "구분", value: selected?.type ?? "" },
-                { label: "분류", value: selected?.category ?? "" },
-                { label: "담당자", value: selected?.contact ?? "" },
-                { label: "연락처", value: selected?.phone ?? "" },
-                { label: "이메일", value: selected?.email ?? "" },
-                { label: "주소", value: selected?.address ?? "" },
-              ].map((f) => (
+              {fields.map((f) => (
                 <div key={f.label} className="flex items-center gap-4">
                   <label className="text-sm font-medium w-20 shrink-0" style={{ color: "#666" }}>{f.label}</label>
-                  <input
-                    defaultValue={f.value}
-                    className="flex-1 px-3 py-2 text-sm outline-none"
-                    style={{ border: "1px solid #E5EAF0", borderRadius: 6, color: "#333" }}
-                  />
+                  {f.options ? (
+                    <select
+                      key={f.value}
+                      defaultValue={f.value}
+                      className="flex-1 px-3 py-2 text-sm outline-none bg-white cursor-pointer"
+                      style={{ border: "1px solid #E5EAF0", borderRadius: 6, color: "#333" }}
+                    >
+                      {f.options.map((o) => (
+                        <option key={o} value={o}>{o}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      defaultValue={f.value}
+                      className="flex-1 px-3 py-2 text-sm outline-none"
+                      style={{ border: "1px solid #E5EAF0", borderRadius: 6, color: "#333" }}
+                    />
+                  )}
                 </div>
               ))}
             </div>
-            <div className="flex gap-3 mt-8 justify-end">
-              <button onClick={() => setShowModal(false)} className="px-5 py-2 text-sm font-medium" style={{ border: "1px solid #E5EAF0", borderRadius: 7, color: "#666" }}>
-                취소
-              </button>
-              <button onClick={() => setShowModal(false)} className="px-5 py-2 text-sm font-medium" style={{ background: "#0B3D91", color: "white", borderRadius: 7 }}>
-                저장
-              </button>
-            </div>
+            {confirmDelete ? (
+              <div
+                className="flex items-center justify-between gap-4 mt-8 px-4 py-3"
+                style={{ background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 8 }}
+              >
+                <span className="text-sm" style={{ color: "#991B1B" }}>
+                  {selected?.name} 거래처를 삭제할까요?
+                </span>
+                <div className="flex gap-2 shrink-0">
+                  <button
+                    onClick={() => setConfirmDelete(false)}
+                    className="px-3 py-1.5 text-sm font-medium"
+                    style={{ background: "white", border: "1px solid #E5EAF0", borderRadius: 6, color: "#666" }}
+                  >
+                    취소
+                  </button>
+                  <button
+                    onClick={handleDelete}
+                    className="px-3 py-1.5 text-sm font-medium"
+                    style={{ background: "#DC2626", color: "white", borderRadius: 6 }}
+                  >
+                    삭제
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-3 mt-8">
+                {selected && (
+                  <button
+                    onClick={() => setConfirmDelete(true)}
+                    className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium transition-colors"
+                    style={{ background: "white", border: "1px solid #FECACA", borderRadius: 7, color: "#DC2626" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = "#FEF2F2")}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = "white")}
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <polyline points="3 6 5 6 21 6" />
+                      <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+                    </svg>
+                    삭제
+                  </button>
+                )}
+                <div className="flex gap-3 ml-auto">
+                  <button onClick={closeModal} className="px-5 py-2 text-sm font-medium" style={{ border: "1px solid #E5EAF0", borderRadius: 7, color: "#666" }}>
+                    취소
+                  </button>
+                  <button onClick={closeModal} className="px-5 py-2 text-sm font-medium" style={{ background: "#0B3D91", color: "white", borderRadius: 7 }}>
+                    저장
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
