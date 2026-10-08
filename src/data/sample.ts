@@ -149,6 +149,11 @@ export const ITEMS: Item[] = [
   { item_id: 402, item_code: "IT-MED-EM-0002", item_name: "레보티록신 정 0.1mg", category_id: 4, category_name: "호르몬 및 대사성 의약품", spec: "100정/병", unit: "정", unit_cost: 6400, unit_price: 9800, safety_stock: 40, supplier_id: 17, supplier_name: "이노젠파마", is_active: true },
   { item_id: 501, item_code: "IT-MED-OT-0001", item_name: "쿨렉스파스", category_id: 5, category_name: "기타", spec: "6매/봉", unit: "개", unit_cost: 2400, unit_price: 4200, safety_stock: 100, supplier_id: 13, supplier_name: "아진바이오", is_active: true },
   { item_id: 502, item_code: "IT-MED-OT-0002", item_name: "메디컬 소독용 에탄올 500mL", category_id: 5, category_name: "기타", spec: "500mL", unit: "병", unit_cost: 1800, unit_price: 3200, safety_stock: 60, supplier_id: 13, supplier_name: "아진바이오", is_active: false },
+  { item_id: 104, item_code: "IT-MED-RI-0004", item_name: "뮤코라제 시럽 100mL", category_id: 1, category_name: "감염성질환 및 호흡기계", spec: "100mL/병", unit: "병", unit_cost: 3900, unit_price: 6200, safety_stock: 80, supplier_id: 16, supplier_name: "한결제약", is_active: true },
+  { item_id: 204, item_code: "IT-MED-GC-0004", item_name: "라니티딘 정 150mg", category_id: 2, category_name: "소화기계 및 순환기계", spec: "100정/PTP", unit: "정", unit_cost: 2800, unit_price: 4600, safety_stock: 120, supplier_id: 15, supplier_name: "세움파마", is_active: true },
+  { item_id: 303, item_code: "IT-MED-NP-0003", item_name: "이지엔6 이브 연질캡슐", category_id: 3, category_name: "신경계 및 정신/행동장애", spec: "10캡슐/PTP", unit: "캡슐", unit_cost: 4100, unit_price: 6500, safety_stock: 90, supplier_id: 19, supplier_name: "그린셀제약", is_active: true },
+  { item_id: 403, item_code: "IT-MED-EM-0003", item_name: "마그비맥스 연질캡슐", category_id: 4, category_name: "호르몬 및 대사성 의약품", spec: "60캡슐/병", unit: "병", unit_cost: 7200, unit_price: 11500, safety_stock: 50, supplier_id: 17, supplier_name: "이노젠파마", is_active: true },
+  { item_id: 503, item_code: "IT-MED-OT-0003", item_name: "비판텐 연고 30g", category_id: 5, category_name: "기타", spec: "30g/튜브", unit: "개", unit_cost: 5400, unit_price: 8300, safety_stock: 70, supplier_id: 23, supplier_name: "웰니스팜", is_active: true },
 ]
 
 export function itemOf(itemId: number): Item {
@@ -178,6 +183,12 @@ const LOT_SEED: [number, string, number, number][] = [
   [402, "LT2610B", 30, 18],
   [501, "CX2705A", 190, 240],
   [502, "ET2608A", -30, 12],
+  // 안전재고에 못 미치는 품목들 — 대시보드 재고 경고 목록에 쌓인다
+  [104, "MC2611A", 55, 30],
+  [204, "RN2705B", 175, 45],
+  [303, "EZ2610C", 20, 22],
+  [403, "MG2709A", 265, 38],
+  [503, "BP2612B", 70, 16],
 ]
 
 let lotSeq = 10
