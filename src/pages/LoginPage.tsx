@@ -6,7 +6,8 @@ interface Props {
   onBack: () => void
 }
 
-const DEMO_USERS: Record<string, { password: string; role: UserRole; name: string }> = {
+/** 로그인 API 연동 전까지 쓰는 임시 계정 목록. 서버 인증이 붙으면 제거한다. */
+const ACCOUNTS: Record<string, { password: string; role: UserRole; name: string }> = {
   "admin@pharmlink.co.kr": { password: "admin123", role: "admin", name: "김관리자" },
   "sales@pharmlink.co.kr": { password: "sales123", role: "sales", name: "이영업" },
   "warehouse@pharmlink.co.kr": { password: "wh123", role: "warehouse", name: "박창고" },
@@ -23,7 +24,7 @@ export default function LoginPage({ onLogin, onBack }: Props) {
     setError("")
     setLoading(true)
     setTimeout(() => {
-      const found = DEMO_USERS[email]
+      const found = ACCOUNTS[email]
       if (found && found.password === password) {
         onLogin({ name: found.name, role: found.role, email })
       } else {
@@ -153,30 +154,6 @@ export default function LoginPage({ onLogin, onBack }: Props) {
               {loading ? "인증 중..." : "로그인"}
             </button>
           </form>
-
-          {/* Demo accounts */}
-          <div className="mt-10 p-5" style={{ background: "white", borderRadius: 8, border: "1px solid #E5EAF0" }}>
-            <p className="text-xs font-semibold mb-3" style={{ color: "#999" }}>데모 계정</p>
-            <div className="space-y-2">
-              {[
-                { role: "관리자", email: "admin@pharmlink.co.kr", pw: "admin123" },
-                { role: "영업담당", email: "sales@pharmlink.co.kr", pw: "sales123" },
-                { role: "창고담당", email: "warehouse@pharmlink.co.kr", pw: "wh123" },
-              ].map((d) => (
-                <button
-                  key={d.role}
-                  onClick={() => { setEmail(d.email); setPassword(d.pw) }}
-                  className="w-full flex items-center justify-between px-3 py-2 text-xs transition-colors duration-150 text-left"
-                  style={{ borderRadius: 6, border: "1px solid #F0F0F0" }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = "#F7F9FC")}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = "white")}
-                >
-                  <span className="font-medium" style={{ color: "#333" }}>{d.role}</span>
-                  <span style={{ color: "#999" }}>{d.email}</span>
-                </button>
-              ))}
-            </div>
-          </div>
         </div>
       </div>
     </div>
