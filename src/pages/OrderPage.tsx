@@ -1,6 +1,8 @@
-import { useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import type { AuthUser } from "../App"
-import { CUSTOMERS, DELIVERIES, ITEMS, ORDERS, TODAY, itemOf } from "../data/sample"
+import { ApiError, errorMessage, fetchAllPages, ordersApi, partnersApi } from "../api"
+// 상품 목록 API(6.1)가 생기기 전까지 상품 선택은 샘플 상품을 쓴다 (로컬 DB에 같은 item_id 필요)
+import { ITEMS } from "../data/sample"
 import {
   DELIVERY_STATUS_LABELS,
   DELIVERY_STATUS_TONES,
@@ -12,7 +14,7 @@ import {
   formatNumber,
 } from "../lib/domain"
 import { ORDER_STATUSES } from "../types/api"
-import type { OrderDetail, OrderItem, OrderStatus } from "../types/api"
+import type { BusinessPartner, InsufficientStockDetail, OrderDetail, OrderStatus, OrderSummary } from "../types/api"
 
 /**
  * 8. 주문 — 관리자·영업 전용.
@@ -31,20 +33,52 @@ interface DraftLine {
   quantity: number
 }
 
+/** 409 INSUFFICIENT_STOCK 이면 부족한 상품별로 요청·가용 수량을 함께 보여 준다 */
+function approveErrorMessage(err: unknown): string {
+  if (err instanceof ApiError && err.code === "INSUFFICIENT_STOCK") {
+    const lines = (err.details as unknown as InsufficientStockDetail[]).map(
+      (d) => `${d.item_name}: 요청 ${formatNumber(d.requested_quantity)} / 가용 ${formatNumber(d.available_quantity)}`,
+    )
+    return lines.length > 0 ? `${err.message} (${lines.join(", ")})` : err.message
+  }
+  return errorMessage(err, "주문을 승인하지 못했습니다.")
+}
+
 export default function OrderPage({ user }: Props) {
-  const [orders, setOrders] = useState<OrderDetail[]>(ORDERS)
+  const [orders, setOrders] = useState<OrderSummary[]>([])
+  const [customers, setCustomers] = useState<BusinessPartner[]>([])
+  const [error, setError] = useState<string | null>(null)
+  const [formError, setFormError] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState<OrderStatus | "전체">("전체")
   const [partnerFilter, setPartnerFilter] = useState<number | "전체">("전체")
   const [detail, setDetail] = useState<OrderDetail | null>(null)
   const [showCreate, setShowCreate] = useState(false)
-  const [cancelTarget, setCancelTarget] = useState<OrderDetail | null>(null)
+  const [cancelTarget, setCancelTarget] = useState<OrderSummary | OrderDetail | null>(null)
   const [cancelReason, setCancelReason] = useState("")
 
-  const [draftPartner, setDraftPartner] = useState<number>(CUSTOMERS[0]?.partner_id ?? 0)
+  const [draftPartner, setDraftPartner] = useState<number>(0)
   const [draftLines, setDraftLines] = useState<DraftLine[]>([{ item_id: ITEMS[0].item_id, quantity: 1 }])
 
   // 8장 전체가 관리자·영업 권한이다
   const canManage = user.role === "ADMIN" || user.role === "SALES"
+
+  /** 8.1 주문 목록 — 상태별 건수를 위해 전체를 받는다 */
+  const reloadOrders = useCallback(
+    () => fetchAllPages((page, page_size) => ordersApi.list({ page, page_size })).then(setOrders),
+    [],
+  )
+
+  useEffect(() => {
+    Promise.all([
+      reloadOrders(),
+      fetchAllPages((page, page_size) =>
+        partnersApi.list({ partner_type: "CUSTOMER", include_inactive: true, page, page_size }),
+      ).then((rows) => {
+        setCustomers(rows)
+        setDraftPartner(rows.find((p) => p.is_active)?.partner_id ?? 0)
+      }),
+    ]).catch((err) => setError(errorMessage(err, "주문 목록을 불러오지 못했습니다.")))
+  }, [reloadOrders])
 
   const filtered = orders.filter((o) => {
     const matchStatus = statusFilter === "전체" || o.status === statusFilter
@@ -58,86 +92,65 @@ export default function OrderPage({ user }: Props) {
     CANCELLED: orders.filter((o) => o.status === "CANCELLED").length,
   }
 
-  const deliveryOf = (orderId: number) => DELIVERIES.find((d) => d.order_id === orderId)
+  /** 8.3 주문 상세 — 원가·납품 번호·취소 정보는 상세에만 있다 */
+  const openDetail = (orderId: number) => {
+    setError(null)
+    ordersApi.get(orderId)
+        .then(setDetail)
+        .catch((err) => setError(errorMessage(err, "주문 상세를 불러오지 못했습니다.")))
+  }
 
   /** 8.4 주문 승인 — 재고 차감 후 납품(WAITING)이 생성된다 */
-  const approve = (order: OrderDetail) => {
-    setOrders((prev) =>
-      prev.map((o) =>
-        o.order_id === order.order_id
-          ? { ...o, status: "APPROVED", approved_at: new Date().toISOString(), delivery_id: o.order_id }
-          : o,
-      ),
-    )
-    setDetail(null)
+  const approve = async (orderId: number) => {
+    setError(null)
+    try {
+      await ordersApi.approve(orderId)
+      await reloadOrders()
+      setDetail(null)
+    } catch (err) {
+      setDetail(null)
+      setError(approveErrorMessage(err))
+    }
   }
 
   /** 8.5 주문 취소 — PENDING 상태에서만 가능하다 */
-  const cancel = () => {
+  const cancel = async () => {
     if (!cancelTarget) return
-    setOrders((prev) =>
-      prev.map((o) =>
-        o.order_id === cancelTarget.order_id
-          ? {
-              ...o,
-              status: "CANCELLED",
-              cancel_reason: cancelReason.trim() || null,
-              cancelled_at: new Date().toISOString(),
-              cancelled_by: user.user_id,
-            }
-          : o,
-      ),
-    )
+    setError(null)
+    try {
+      await ordersApi.cancel(cancelTarget.order_id, cancelReason.trim() || undefined)
+      await reloadOrders()
+    } catch (err) {
+      setError(errorMessage(err, "주문을 취소하지 못했습니다."))
+    }
     setCancelTarget(null)
     setCancelReason("")
     setDetail(null)
   }
 
   /** 8.2 주문 등록 — 판매단가는 서버가 상품 마스터에서 조회해 스냅샷으로 저장한다 */
-  const createOrder = () => {
+  const createOrder = async () => {
     const lines = draftLines.filter((l) => l.quantity > 0)
     if (lines.length === 0) return
-
-    let itemSeq = Date.now()
-    const items: OrderItem[] = lines.map((line) => {
-      const item = itemOf(line.item_id)
-      return {
-        order_item_id: ++itemSeq,
-        item_id: item.item_id,
-        item_code: item.item_code,
-        item_name: item.item_name,
-        quantity: line.quantity,
-        unit_price: item.unit_price,
-        unit_cost: item.unit_cost,
-        line_amount: line.quantity * item.unit_price,
-      }
-    })
-
-    const nextId = Math.max(0, ...orders.map((o) => o.order_id)) + 1
-    const partner = CUSTOMERS.find((p) => p.partner_id === draftPartner)
-
-    setOrders((prev) => [
-      {
-        order_id: nextId,
-        order_number: `ORD-${TODAY.replace(/-/g, "")}-${String(nextId).padStart(4, "0")}`,
+    setFormError(null)
+    try {
+      await ordersApi.create({
         partner_id: draftPartner,
-        partner_name: partner?.name ?? "-",
-        status: "PENDING",
-        items,
-        total_amount: items.reduce((sum, i) => sum + i.line_amount, 0),
-        delivery_id: null,
-        cancel_reason: null,
-        approved_at: null,
-        cancelled_at: null,
-        cancelled_by: null,
-        created_by: user.user_id,
-        created_at: new Date().toISOString(),
-      },
-      ...prev,
-    ])
+        items: lines.map((l) => ({ item_id: l.item_id, quantity: l.quantity })),
+      })
+      await reloadOrders()
+    } catch (err) {
+      // 등록 창은 닫지 않고 창 안에 오류를 보여 준다 (거래처 화면과 같은 방식)
+      setFormError(errorMessage(err, "주문을 등록하지 못했습니다."))
+      return
+    }
     setShowCreate(false)
     setDraftLines([{ item_id: ITEMS[0].item_id, quantity: 1 }])
   }
+
+  // 납품 API(9.1)는 스프린트 3에서 연동한다. 그 전까지 출고·납품 완료 API가 없어 승인된 주문의 납품은 항상 WAITING이다
+  const deliveryOf = (order: OrderSummary | OrderDetail) =>
+    order.status === "APPROVED" ? { status: "WAITING" as const } : undefined
 
   const draftTotal = draftLines.reduce((sum, l) => {
     const item = ITEMS.find((i) => i.item_id === l.item_id)
@@ -161,7 +174,7 @@ export default function OrderPage({ user }: Props) {
           </div>
           {canManage && (
               <button
-                  onClick={() => setShowCreate(true)}
+                  onClick={() => { setShowCreate(true); setFormError(null) }}
                   className="flex items-center gap-2 px-4 py-2 text-sm font-medium"
                   style={{ background: "#0B3D91", color: "white", borderRadius: 7 }}
               >
@@ -172,6 +185,12 @@ export default function OrderPage({ user }: Props) {
               </button>
           )}
         </div>
+
+        {error && (
+            <p className="px-4 py-2.5 text-sm" style={{ background: "#FEF2F2", color: "#DC2626", borderRadius: 6 }}>
+              {error}
+            </p>
+        )}
 
         {/* 상태 요약 */}
         <div className="grid grid-cols-3 gap-3">
@@ -202,7 +221,7 @@ export default function OrderPage({ user }: Props) {
               style={{ border: "1px solid #E5EAF0", borderRadius: 7, background: "white" }}
           >
             <option value="전체">전체 고객사</option>
-            {CUSTOMERS.map((p) => (
+            {customers.map((p) => (
                 <option key={p.partner_id} value={p.partner_id}>{p.name}</option>
             ))}
           </select>
@@ -221,7 +240,7 @@ export default function OrderPage({ user }: Props) {
               </thead>
               <tbody>
               {filtered.map((o, i) => {
-                const delivery = deliveryOf(o.order_id)
+                const delivery = deliveryOf(o)
                 const tone = ORDER_STATUS_TONES[o.status]
                 return (
                     <tr
@@ -232,7 +251,7 @@ export default function OrderPage({ user }: Props) {
                     >
                       <td className="px-5 py-4 font-mono text-xs" style={{ color: "#666" }}>{o.order_number}</td>
                       <td className="px-5 py-4 font-medium" style={{ color: "#1a1a1a" }}>{o.partner_name}</td>
-                      <td className="px-5 py-4 text-sm" style={{ color: "#555" }}>{o.items.length}개</td>
+                      <td className="px-5 py-4 text-sm" style={{ color: "#555" }}>{o.item_count}개</td>
                       <td className="px-5 py-4 font-medium" style={{ color: "#333", fontFamily: "'Inter', sans-serif" }}>{formatMoney(o.total_amount)}</td>
                       <td className="px-5 py-4">
                         <span className="text-xs font-medium px-2.5 py-1 rounded-full" style={tone}>
@@ -251,10 +270,10 @@ export default function OrderPage({ user }: Props) {
                       <td className="px-5 py-4 text-xs" style={{ color: "#999", fontFamily: "'Inter', sans-serif" }}>{formatDate(o.created_at)}</td>
                       <td className="px-5 py-4">
                         <div className="flex gap-3">
-                          <button onClick={() => setDetail(o)} className="text-xs font-medium" style={{ color: "#0B3D91" }}>상세</button>
+                          <button onClick={() => openDetail(o.order_id)} className="text-xs font-medium" style={{ color: "#0B3D91" }}>상세</button>
                           {canManage && o.status === "PENDING" && (
                               <>
-                                <button onClick={() => approve(o)} className="text-xs font-medium" style={{ color: "#059669" }}>승인</button>
+                                <button onClick={() => approve(o.order_id)} className="text-xs font-medium" style={{ color: "#059669" }}>승인</button>
                                 <button onClick={() => { setCancelTarget(o); setCancelReason("") }} className="text-xs font-medium" style={{ color: "#DC2626" }}>취소</button>
                               </>
                           )}
@@ -321,7 +340,7 @@ export default function OrderPage({ user }: Props) {
                     { label: "주문 금액", value: formatMoney(detail.total_amount) },
                     { label: "등록일시", value: formatDateTime(detail.created_at) },
                     { label: "승인일시", value: formatDateTime(detail.approved_at) },
-                    { label: "납품", value: detail.delivery_id ? `#${detail.delivery_id} · ${DELIVERY_STATUS_LABELS[deliveryOf(detail.order_id)?.status ?? "WAITING"]}` : "미생성" },
+                    { label: "납품", value: detail.delivery_id ? `#${detail.delivery_id} · ${DELIVERY_STATUS_LABELS[deliveryOf(detail)?.status ?? "WAITING"]}` : "미생성" },
                     ...(detail.status === "CANCELLED"
                         ? [
                             { label: "취소일시", value: formatDateTime(detail.cancelled_at) },
@@ -347,7 +366,7 @@ export default function OrderPage({ user }: Props) {
                           주문 취소
                         </button>
                         <button
-                            onClick={() => approve(detail)}
+                            onClick={() => approve(detail.order_id)}
                             className="px-5 py-2 text-sm font-medium"
                             style={{ background: "#059669", color: "white", borderRadius: 7 }}
                         >
@@ -399,6 +418,10 @@ export default function OrderPage({ user }: Props) {
                   등록 직후 상태는 승인 대기입니다. 판매단가는 상품 마스터에서 자동으로 적용됩니다.
                 </p>
 
+                {formError && (
+                    <p className="mb-4 px-4 py-2.5 text-sm" style={{ background: "#FEF2F2", color: "#DC2626", borderRadius: 6 }}>{formError}</p>
+                )}
+
                 <div className="mb-5">
                   <label className="block text-xs font-medium mb-1.5" style={{ color: "#666" }}>고객사</label>
                   <select
@@ -407,7 +430,7 @@ export default function OrderPage({ user }: Props) {
                       className="w-full px-3 py-2 text-sm outline-none cursor-pointer"
                       style={{ border: "1px solid #E5EAF0", borderRadius: 6, background: "white", color: "#333" }}
                   >
-                    {CUSTOMERS.filter((p) => p.is_active).map((p) => (
+                    {customers.filter((p) => p.is_active).map((p) => (
                         <option key={p.partner_id} value={p.partner_id}>{p.name}</option>
                     ))}
                   </select>
