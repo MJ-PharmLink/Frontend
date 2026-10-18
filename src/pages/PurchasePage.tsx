@@ -1,7 +1,9 @@
-import { useState } from "react"
-import { DEFAULT_WAREHOUSE, ITEMS, PURCHASES, SUPPLIERS, TODAY, WAREHOUSES, itemOf } from "../data/sample"
+import { useCallback, useEffect, useState } from "react"
+import { errorMessage, fetchAllPages, partnersApi, purchasesApi } from "../api"
+// 상품(6.1)·창고(6.8) 목록 API가 생기기 전까지 선택 목록은 샘플을 쓴다 (로컬 DB에 같은 item_id·warehouse_id 필요)
+import { DEFAULT_WAREHOUSE, ITEMS, TODAY, WAREHOUSES } from "../data/sample"
 import { formatDate, formatDateTime, formatMoney, formatNumber } from "../lib/domain"
-import type { PurchaseDetail, PurchaseItem } from "../types/api"
+import type { BusinessPartner, PurchaseDetail } from "../types/api"
 
 /**
  * 10. 매입 — 관리자·창고 전용.
@@ -27,7 +29,9 @@ const emptyLine = (): DraftLine => ({
 })
 
 export default function PurchasePage() {
-  const [purchases, setPurchases] = useState<PurchaseDetail[]>(PURCHASES)
+  const [purchases, setPurchases] = useState<PurchaseDetail[]>([])
+  const [suppliers, setSuppliers] = useState<BusinessPartner[]>([])
+  const [pageError, setPageError] = useState<string | null>(null)
   const [partnerFilter, setPartnerFilter] = useState<number | "전체">("전체")
   const [startDate, setStartDate] = useState("")
   const [endDate, setEndDate] = useState("")
@@ -35,13 +39,35 @@ export default function PurchasePage() {
   const [showCreate, setShowCreate] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const [draftPartner, setDraftPartner] = useState<number>(SUPPLIERS[0]?.partner_id ?? 0)
+  const [draftPartner, setDraftPartner] = useState<number>(0)
   const [draftWarehouse, setDraftWarehouse] = useState<number>(DEFAULT_WAREHOUSE.warehouse_id)
   const [draftDate, setDraftDate] = useState(TODAY)
   const [draftLines, setDraftLines] = useState<DraftLine[]>([emptyLine()])
 
+  /**
+   * 10.1 매입 목록 → 10.3 상세. 요약 카드의 입고 수량 합계에 라인 수량이 필요해서
+   * 목록의 각 매입을 상세로 다시 받는다 (목록 응답에는 라인이 없다)
+   */
+  const reloadPurchases = useCallback(async () => {
+    const rows = await fetchAllPages((page, page_size) => purchasesApi.list({ page, page_size }))
+    setPurchases(await Promise.all(rows.map((row) => purchasesApi.get(row.purchase_id))))
+  }, [])
+
+  useEffect(() => {
+    Promise.all([
+      reloadPurchases(),
+      fetchAllPages((page, page_size) =>
+        partnersApi.list({ partner_type: "SUPPLIER", include_inactive: true, page, page_size }),
+      ).then((rows) => {
+        setSuppliers(rows)
+        setDraftPartner(rows.find((p) => p.is_active)?.partner_id ?? 0)
+      }),
+    ]).catch((err) => setPageError(errorMessage(err, "매입 목록을 불러오지 못했습니다.")))
+  }, [reloadPurchases])
+
   // 10.1 기간 필터는 purchase_date 기준이며 시작일·종료일 모두 포함한다
-  const filtered = purchases.filter((p) => {
+  const invalidRange = startDate !== "" && endDate !== "" && startDate > endDate
+  const filtered = invalidRange ? [] : purchases.filter((p) => {
     const matchPartner = partnerFilter === "전체" || p.partner_id === partnerFilter
     const matchStart = startDate === "" || p.purchase_date >= startDate
     const matchEnd = endDate === "" || p.purchase_date <= endDate
@@ -59,7 +85,7 @@ export default function PurchasePage() {
     return sum + (item ? item.unit_cost * l.quantity : 0)
   }, 0)
 
-  const createPurchase = () => {
+  const createPurchase = async () => {
     const lines = draftLines.filter((l) => l.quantity > 0)
     if (lines.length === 0) return setError("매입 품목을 한 개 이상 입력해 주세요.")
     if (lines.some((l) => l.lot_number.trim() === "")) return setError("로트번호는 필수입니다.")
@@ -74,39 +100,23 @@ export default function PurchasePage() {
       return setError("같은 상품에 동일한 로트번호를 중복으로 넣을 수 없습니다.")
     }
 
-    let itemSeq = Date.now()
-    const items: PurchaseItem[] = lines.map((line) => {
-      const item = itemOf(line.item_id)
-      return {
-        purchase_item_id: ++itemSeq,
-        item_id: item.item_id,
-        item_code: item.item_code,
-        item_name: item.item_name,
-        quantity: line.quantity,
-        // 원가 스냅샷 (3.15)
-        unit_cost: item.unit_cost,
-        line_amount: line.quantity * item.unit_cost,
-        lot_id: ++itemSeq,
-        lot_number: line.lot_number.trim(),
-        expiry_date: line.expiry_date,
-      }
-    })
-
-    const supplier = SUPPLIERS.find((s) => s.partner_id === draftPartner)
-    setPurchases((prev) => [
-      {
-        purchase_id: Math.max(0, ...prev.map((p) => p.purchase_id)) + 1,
+    // 원가 스냅샷(3.15)·로트 생성·재고 증가는 서버가 한 트랜잭션으로 처리한다
+    try {
+      await purchasesApi.create({
         partner_id: draftPartner,
-        partner_name: supplier?.name ?? "-",
         warehouse_id: draftWarehouse,
         purchase_date: draftDate,
-        items,
-        total_amount: items.reduce((sum, i) => sum + i.line_amount, 0),
-        created_by: 3,
-        created_at: new Date().toISOString(),
-      },
-      ...prev,
-    ])
+        items: lines.map((l) => ({
+          item_id: l.item_id,
+          quantity: l.quantity,
+          lot_number: l.lot_number.trim(),
+          expiry_date: l.expiry_date,
+        })),
+      })
+      await reloadPurchases()
+    } catch (err) {
+      return setError(errorMessage(err, "매입을 등록하지 못했습니다."))
+    }
     setShowCreate(false)
     setDraftLines([emptyLine()])
     setError(null)
@@ -135,6 +145,12 @@ export default function PurchasePage() {
           </button>
         </div>
 
+        {pageError && (
+            <p className="px-4 py-2.5 text-sm" style={{ background: "#FEF2F2", color: "#DC2626", borderRadius: 6 }}>
+              {pageError}
+            </p>
+        )}
+
         {/* 요약 */}
         <div className="grid grid-cols-3 gap-3">
           {[
@@ -158,7 +174,7 @@ export default function PurchasePage() {
               style={{ border: "1px solid #E5EAF0", borderRadius: 7, background: "white" }}
           >
             <option value="전체">전체 공급처</option>
-            {SUPPLIERS.map((p) => (
+            {suppliers.map((p) => (
                 <option key={p.partner_id} value={p.partner_id}>{p.name}</option>
             ))}
           </select>
@@ -175,6 +191,12 @@ export default function PurchasePage() {
               </button>
           )}
         </div>
+
+        {invalidRange && (
+            <p className="px-4 py-2.5 text-sm" style={{ background: "#FEF2F2", color: "#DC2626", borderRadius: 6 }}>
+              시작일이 종료일보다 늦습니다. 기간을 다시 선택해 주세요.
+            </p>
+        )}
 
         {/* 목록 */}
         <div className="bg-white" style={{ borderRadius: 8, border: "1px solid #E5EAF0" }}>
@@ -298,7 +320,7 @@ export default function PurchasePage() {
                         className="w-full px-3 py-2 text-sm outline-none cursor-pointer"
                         style={{ ...inputStyle, background: "white" }}
                     >
-                      {SUPPLIERS.filter((s) => s.is_active).map((s) => (
+                      {suppliers.filter((s) => s.is_active).map((s) => (
                           <option key={s.partner_id} value={s.partner_id}>{s.name}</option>
                       ))}
                     </select>
