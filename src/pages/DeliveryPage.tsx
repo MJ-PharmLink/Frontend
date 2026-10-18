@@ -1,7 +1,8 @@
-import { useState } from "react"
-import { ApiError, deliveriesApi } from "../api"
+import { useCallback, useEffect, useState } from "react"
+import { deliveriesApi, errorMessage, fetchAllPages, partnersApi } from "../api"
 import type { AuthUser } from "../App"
-import { COMPANY, CUSTOMERS, DELIVERIES, PARTNERS } from "../data/sample"
+// 서버 주소가 없을 때의 인쇄 미리보기에서만 샘플 회사·거래처 정보를 쓴다
+import { COMPANY, PARTNERS } from "../data/sample"
 import {
   DELIVERY_STATUS_LABELS,
   DELIVERY_STATUS_TONES,
@@ -11,7 +12,7 @@ import {
   formatNumber,
 } from "../lib/domain"
 import { DELIVERY_STATUSES } from "../types/api"
-import type { DeliveryDetail, DeliveryStatus } from "../types/api"
+import type { BusinessPartner, DeliveryDetail, DeliveryStatus } from "../types/api"
 
 /**
  * 9. 납품.
@@ -105,7 +106,9 @@ function openPrintableDocument(delivery: DeliveryDetail) {
 }
 
 export default function DeliveryPage({ user }: Props) {
-  const [deliveries, setDeliveries] = useState<DeliveryDetail[]>(DELIVERIES)
+  const [deliveries, setDeliveries] = useState<DeliveryDetail[]>([])
+  const [customers, setCustomers] = useState<BusinessPartner[]>([])
+  const [error, setError] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState<DeliveryStatus | "전체">("전체")
   const [partnerFilter, setPartnerFilter] = useState<number | "전체">("전체")
   const [detail, setDetail] = useState<DeliveryDetail | null>(null)
@@ -114,6 +117,27 @@ export default function DeliveryPage({ user }: Props) {
 
   // 9.3 출고 완료와 9.4 납품 완료는 관리자·창고 권한이다
   const canProcess = user.role === "ADMIN" || user.role === "WAREHOUSE"
+
+  /**
+   * 9.1 납품 목록. 목록 응답에는 출고·납품 일시가 없어서
+   * 목록 표의 일시 열을 채우려고 건마다 9.2 상세를 함께 불러온다.
+   */
+  const reloadDeliveries = useCallback(
+    () =>
+      fetchAllPages((page, page_size) => deliveriesApi.list({ page, page_size }))
+        .then((rows) => Promise.all(rows.map((d) => deliveriesApi.get(d.delivery_id))))
+        .then(setDeliveries),
+    [],
+  )
+
+  useEffect(() => {
+    Promise.all([
+      reloadDeliveries(),
+      fetchAllPages((page, page_size) =>
+        partnersApi.list({ partner_type: "CUSTOMER", include_inactive: true, page, page_size }),
+      ).then(setCustomers),
+    ]).catch((err) => setError(errorMessage(err, "납품 목록을 불러오지 못했습니다.")))
+  }, [reloadDeliveries])
 
   const filtered = deliveries.filter((d) => {
     const matchStatus = statusFilter === "전체" || d.status === statusFilter
@@ -128,31 +152,30 @@ export default function DeliveryPage({ user }: Props) {
   }
 
   /** 9.3 출고 완료 처리 (WAITING → SHIPPED) */
-  const ship = (delivery: DeliveryDetail) => {
-    setDeliveries((prev) =>
-      prev.map((d) =>
-        d.delivery_id === delivery.delivery_id
-          ? { ...d, status: "SHIPPED", shipped_at: new Date().toISOString() }
-          : d,
-      ),
-    )
+  const ship = async (delivery: DeliveryDetail) => {
+    setError(null)
+    try {
+      await deliveriesApi.ship(delivery.delivery_id)
+      await reloadDeliveries()
+    } catch (err) {
+      setError(errorMessage(err, "출고 완료 처리하지 못했습니다."))
+    }
     setDetail(null)
   }
 
   /** 9.4 납품 완료 처리 (SHIPPED → DELIVERED) — 매출이 자동 생성된다 */
-  const complete = (delivery: DeliveryDetail) => {
-    const cost = delivery.items.reduce((sum, i) => sum + i.quantity * Math.round(i.unit_price * 0.7), 0)
-    setDeliveries((prev) =>
-      prev.map((d) =>
-        d.delivery_id === delivery.delivery_id
-          ? { ...d, status: "DELIVERED", delivered_at: new Date().toISOString() }
-          : d,
-      ),
-    )
+  const complete = async (delivery: DeliveryDetail) => {
+    setError(null)
+    try {
+      const result = await deliveriesApi.complete(delivery.delivery_id)
+      await reloadDeliveries()
+      setNotice(
+        `납품 #${result.delivery_id} 완료 · 매출 ${formatMoney(result.sales_amount)} 기록 (마진 ${formatMoney(result.margin_amount)})`,
+      )
+    } catch (err) {
+      setError(errorMessage(err, "납품 완료 처리하지 못했습니다."))
+    }
     setDetail(null)
-    setNotice(
-      `납품 #${delivery.delivery_id} 완료 · 매출 ${formatMoney(delivery.total_amount)} 기록 (추정 마진 ${formatMoney(delivery.total_amount - cost)})`,
-    )
   }
 
   /**
@@ -176,7 +199,8 @@ export default function DeliveryPage({ user }: Props) {
       link.click()
       URL.revokeObjectURL(url)
     } catch (err) {
-      setNotice(err instanceof ApiError ? err.message : "납품서를 내려받지 못했습니다.")
+      setDetail(null)
+      setError(errorMessage(err, "납품서를 내려받지 못했습니다."))
     } finally {
       setDownloading(null)
     }
@@ -208,6 +232,12 @@ export default function DeliveryPage({ user }: Props) {
             </div>
         )}
 
+        {error && (
+            <p className="px-4 py-2.5 text-sm" style={{ background: "#FEF2F2", color: "#DC2626", borderRadius: 6 }}>
+              {error}
+            </p>
+        )}
+
         {/* 상태 요약 */}
         <div className="grid grid-cols-3 gap-3">
           {DELIVERY_STATUSES.map((s) => (
@@ -237,7 +267,7 @@ export default function DeliveryPage({ user }: Props) {
               style={{ border: "1px solid #E5EAF0", borderRadius: 7, background: "white" }}
           >
             <option value="전체">전체 고객사</option>
-            {CUSTOMERS.map((p) => (
+            {customers.map((p) => (
                 <option key={p.partner_id} value={p.partner_id}>{p.name}</option>
             ))}
           </select>

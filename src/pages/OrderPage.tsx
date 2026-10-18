@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
 import type { AuthUser } from "../App"
-import { ApiError, errorMessage, fetchAllPages, ordersApi, partnersApi } from "../api"
+import { ApiError, deliveriesApi, errorMessage, fetchAllPages, ordersApi, partnersApi } from "../api"
 // 상품 목록 API(6.1)가 생기기 전까지 상품 선택은 샘플 상품을 쓴다 (로컬 DB에 같은 item_id 필요)
 import { ITEMS } from "../data/sample"
 import {
@@ -14,7 +14,14 @@ import {
   formatNumber,
 } from "../lib/domain"
 import { ORDER_STATUSES } from "../types/api"
-import type { BusinessPartner, InsufficientStockDetail, OrderDetail, OrderStatus, OrderSummary } from "../types/api"
+import type {
+  BusinessPartner,
+  DeliveryStatus,
+  InsufficientStockDetail,
+  OrderDetail,
+  OrderStatus,
+  OrderSummary,
+} from "../types/api"
 
 /**
  * 8. 주문 — 관리자·영업 전용.
@@ -47,6 +54,8 @@ function approveErrorMessage(err: unknown): string {
 export default function OrderPage({ user }: Props) {
   const [orders, setOrders] = useState<OrderSummary[]>([])
   const [customers, setCustomers] = useState<BusinessPartner[]>([])
+  // 주문 ID → 연결된 납품 상태 (9.1 납품 목록에서 가져온다)
+  const [deliveryStatuses, setDeliveryStatuses] = useState<Map<number, DeliveryStatus>>(new Map())
   const [error, setError] = useState<string | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState<OrderStatus | "전체">("전체")
@@ -62,9 +71,15 @@ export default function OrderPage({ user }: Props) {
   // 8장 전체가 관리자·영업 권한이다
   const canManage = user.role === "ADMIN" || user.role === "SALES"
 
-  /** 8.1 주문 목록 — 상태별 건수를 위해 전체를 받는다 */
+  /** 8.1 주문 목록 — 상태별 건수를 위해 전체를 받는다. 납품 상태는 9.1 납품 목록에서 함께 받는다 */
   const reloadOrders = useCallback(
-    () => fetchAllPages((page, page_size) => ordersApi.list({ page, page_size })).then(setOrders),
+    () =>
+      Promise.all([
+        fetchAllPages((page, page_size) => ordersApi.list({ page, page_size })).then(setOrders),
+        fetchAllPages((page, page_size) => deliveriesApi.list({ page, page_size })).then((rows) =>
+          setDeliveryStatuses(new Map(rows.map((d) => [d.order_id, d.status]))),
+        ),
+      ]),
     [],
   )
 
@@ -148,9 +163,10 @@ export default function OrderPage({ user }: Props) {
     setDraftLines([{ item_id: ITEMS[0].item_id, quantity: 1 }])
   }
 
-  // 납품 API(9.1)는 스프린트 3에서 연동한다. 그 전까지 출고·납품 완료 API가 없어 승인된 주문의 납품은 항상 WAITING이다
-  const deliveryOf = (order: OrderSummary | OrderDetail) =>
-    order.status === "APPROVED" ? { status: "WAITING" as const } : undefined
+  const deliveryOf = (order: OrderSummary | OrderDetail) => {
+    const status = deliveryStatuses.get(order.order_id)
+    return status ? { status } : undefined
+  }
 
   const draftTotal = draftLines.reduce((sum, l) => {
     const item = ITEMS.find((i) => i.item_id === l.item_id)
