@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
 import { deliveriesApi, errorMessage, fetchAllPages, partnersApi } from "../api"
+import { DETAIL_FETCH_CONCURRENCY, mapWithConcurrency } from "../lib/concurrency"
 import type { AuthUser } from "../App"
 // 서버 주소가 없을 때의 인쇄 미리보기에서만 샘플 회사·거래처 정보를 쓴다
 import { COMPANY, PARTNERS } from "../data/sample"
@@ -125,7 +126,7 @@ export default function DeliveryPage({ user }: Props) {
   const reloadDeliveries = useCallback(
     () =>
       fetchAllPages((page, page_size) => deliveriesApi.list({ page, page_size }))
-        .then((rows) => Promise.all(rows.map((d) => deliveriesApi.get(d.delivery_id))))
+        .then((rows) => mapWithConcurrency(rows, DETAIL_FETCH_CONCURRENCY, (d) => deliveriesApi.get(d.delivery_id)))
         .then(setDeliveries),
     [],
   )

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
 import { errorMessage, fetchAllPages, partnersApi, purchasesApi } from "../api"
+import { DETAIL_FETCH_CONCURRENCY, mapWithConcurrency } from "../lib/concurrency"
 // 상품(6.1)·창고(6.8) 목록 API가 생기기 전까지 선택 목록은 샘플을 쓴다 (로컬 DB에 같은 item_id·warehouse_id 필요)
 import { DEFAULT_WAREHOUSE, ITEMS, TODAY, WAREHOUSES } from "../data/sample"
 import { formatDate, formatDateTime, formatMoney, formatNumber } from "../lib/domain"
@@ -50,7 +51,7 @@ export default function PurchasePage() {
    */
   const reloadPurchases = useCallback(async () => {
     const rows = await fetchAllPages((page, page_size) => purchasesApi.list({ page, page_size }))
-    setPurchases(await Promise.all(rows.map((row) => purchasesApi.get(row.purchase_id))))
+    setPurchases(await mapWithConcurrency(rows, DETAIL_FETCH_CONCURRENCY, (row) => purchasesApi.get(row.purchase_id)))
   }, [])
 
   useEffect(() => {
@@ -90,12 +91,13 @@ export default function PurchasePage() {
     if (lines.length === 0) return setError("매입 품목을 한 개 이상 입력해 주세요.")
     if (lines.some((l) => l.lot_number.trim() === "")) return setError("로트번호는 필수입니다.")
     if (lines.some((l) => l.expiry_date === "")) return setError("유통기한은 필수입니다.")
-    // 10.2 — 유통기한은 매입일 이후여야 한다
-    if (lines.some((l) => l.expiry_date <= draftDate)) {
-      return setError("유통기한은 매입일 이후 날짜여야 합니다.")
+    // 10.2 — 유통기한은 매입일 이후여야 한다 (유통기한은 당일까지 유효하므로 매입일과 같은 날은 허용, 이전 날짜만 거부)
+    if (lines.some((l) => l.expiry_date < draftDate)) {
+      return setError("유통기한은 매입일보다 앞설 수 없습니다.")
     }
     // 동일 매입 안에서 같은 (상품, 로트번호) 조합은 중복될 수 없다
-    const keys = lines.map((l) => `${l.item_id}:${l.lot_number.trim()}`)
+    // 로트번호는 서버와 같은 기준(앞뒤 공백 제거, 대소문자 무시)으로 비교한다
+    const keys = lines.map((l) => `${l.item_id}:${l.lot_number.trim().toUpperCase()}`)
     if (new Set(keys).size !== keys.length) {
       return setError("같은 상품에 동일한 로트번호를 중복으로 넣을 수 없습니다.")
     }
