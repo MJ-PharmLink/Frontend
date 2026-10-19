@@ -1,4 +1,11 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import {
+  categoriesApi,
+  errorMessage,
+  fetchAllPages,
+  itemsApi,
+  partnersApi,
+} from "../api"
 import type { AuthUser } from "../App"
 import { CATEGORIES, ITEMS as SAMPLE_ITEMS, SUPPLIERS } from "../data/sample"
 import {
@@ -10,7 +17,7 @@ import {
   formatNumber,
   itemCodePrefix,
 } from "../lib/domain"
-import type { Category, Item } from "../types/api"
+import type { BusinessPartner, Category, Item } from "../types/api"
 
 /**
  * 6. 상품(의약품) 마스터.
@@ -131,17 +138,111 @@ const EMPTY_CATEGORY_FORM = { category_name: "", description: "" }
 
 export function ProductPage({ user }: Props) {
   const [tab, setTab] = useState<TabKey>("items")
-  const [categories, setCategories] = useState<Category[]>(CATEGORIES)
+  const [suppliers, setSuppliers] = useState<BusinessPartner[]>(
+    import.meta.env.VITE_API_BASE_URL ? [] : ACTIVE_SUPPLIERS
+  )
+  const [categories, setCategories] = useState<Category[]>(
+    import.meta.env.VITE_API_BASE_URL ? [] : CATEGORIES
+  )
   const [editingCategory, setEditingCategory] = useState<Category | null>(null)
   const [showCategoryModal, setShowCategoryModal] = useState(false)
   const [categoryForm, setCategoryForm] = useState(EMPTY_CATEGORY_FORM)
   const [categoryError, setCategoryError] = useState<string | null>(null)
-  const [items, setItems] = useState<Item[]>(ITEMS)
+  const [savingCategory, setSavingCategory] = useState(false)
+  const [items, setItems] = useState<Item[]>(
+    import.meta.env.VITE_API_BASE_URL ? [] : ITEMS
+  )
   const [keyword, setKeyword] = useState("")
   const [categoryFilter, setCategoryFilter] = useState("전체")
   const [includeInactive, setIncludeInactive] = useState(false)
   const [showModal, setShowModal] = useState(false)
   const [form, setForm] = useState<ItemForm>(EMPTY_FORM)
+
+  const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+
+  // 실제 백엔드가 연결되어 있으면 샘플 데이터 대신 DB에서 조회한다.
+  useEffect(() => {
+    if (!import.meta.env.VITE_API_BASE_URL) return
+
+    let cancelled = false
+
+    async function loadProducts() {
+      setLoading(true)
+      setLoadError(null)
+
+      try {
+        const [categoryRows, supplierRows, itemRows] = await Promise.all([
+          categoriesApi.list(),
+          fetchAllPages((page, pageSize) =>
+            partnersApi.list({
+              partner_type: "SUPPLIER",
+              page,
+              page_size: pageSize,
+            })
+          ),
+          fetchAllPages((page, pageSize) =>
+            itemsApi.list({ page, page_size: pageSize })
+          ),
+        ])
+
+        const categoryMap = new Map(
+          categoryRows.map((category) => [
+            category.category_id,
+            category.category_name,
+          ])
+        )
+
+        const supplierMap = new Map(
+          supplierRows.map((supplier) => [
+            supplier.partner_id,
+            supplier.name,
+          ])
+        )
+
+        const mappedItems = itemRows.map((item) => ({
+          ...item,
+          category_name: categoryMap.get(item.category_id) ?? "기타",
+          supplier_name: supplierMap.get(item.supplier_id) ?? "-",
+        }))
+
+        if (!cancelled) {
+          setCategories(categoryRows)
+          const activeSuppliers = supplierRows.filter(
+            (supplier) => supplier.is_active
+          )
+          setSuppliers(activeSuppliers)
+          setForm((prev) => ({
+            ...prev,
+            category_id: categoryRows.some(
+              (category) => category.category_id === prev.category_id
+            )
+              ? prev.category_id
+              : (categoryRows[0]?.category_id ?? 0),
+            supplier_id: activeSuppliers.some(
+              (supplier) => supplier.partner_id === prev.supplier_id
+            )
+              ? prev.supplier_id
+              : (activeSuppliers[0]?.partner_id ?? 0),
+          }))
+          setItems(mappedItems)
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setLoadError(errorMessage(error, "상품 데이터를 불러오지 못했습니다."))
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+
+    void loadProducts()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
 
   // 6.1 keyword 는 상품 코드 또는 제품명을 검색하고, 기본적으로 단종 상품은 제외한다
   const filteredItems = items.filter((p) => {
@@ -173,39 +274,123 @@ export function ProductPage({ user }: Props) {
       setForm((prev) => ({ ...prev, [key]: value }))
 
   const openCreate = () => {
-    setForm({ ...EMPTY_FORM, code_number: nextCodeNumber(EMPTY_FORM.category_id) })
+    const categoryId = categories[0]?.category_id ?? 0
+    const supplierId = suppliers[0]?.partner_id ?? 0
+    setForm({
+      ...EMPTY_FORM,
+      category_id: categoryId,
+      supplier_id: supplierId,
+      code_number: nextCodeNumber(categoryId),
+    })
     setShowModal(true)
   }
 
   const changeCategory = (categoryId: number) =>
       setForm((prev) => ({ ...prev, category_id: categoryId, code_number: nextCodeNumber(categoryId) }))
 
-  const handleSave = () => {
-    const category = categories.find((c) => c.category_id === form.category_id)
-    const supplier = ACTIVE_SUPPLIERS.find((s) => s.partner_id === form.supplier_id)
-    const newItem: Item = {
-      item_id: Math.max(0, ...items.map((p) => p.item_id)) + 1,
-      item_code: `${codePrefix}${form.code_number.padStart(4, "0")}`,
-      item_name: form.item_name.trim() || "이름 없는 상품",
-      category_id: form.category_id,
-      category_name: category?.category_name ?? "기타",
-      spec: form.spec.trim() || null,
-      // 포장 수량이 2 이상이면 "10박스" 처럼 수량을 포함해 적는다
-      unit: form.unit_qty > 1 ? `${form.unit_qty}${form.unit}` : form.unit,
-      unit_cost: form.unit_cost,
-      unit_price: form.unit_price,
-      safety_stock: form.safety_stock,
-      supplier_id: form.supplier_id,
-      supplier_name: supplier?.name ?? "-",
-      is_active: true,
+  const handleSave = async () => {
+    if (!import.meta.env.VITE_API_BASE_URL) {
+      setLoadError("백엔드 연결이 필요합니다.")
+      return
     }
-    setItems((prev) => [...prev, newItem])
-    setShowModal(false)
+
+    const itemName = form.item_name.trim()
+    const itemCode = `${codePrefix}${form.code_number.padStart(4, "0")}`
+    const unit = form.unit_qty > 1
+      ? `${form.unit_qty}${form.unit}`
+      : form.unit
+
+    if (!itemName) {
+      setLoadError("상품명을 입력해 주세요.")
+      return
+    }
+
+    if (!form.code_number || itemCode.length > 20) {
+      setLoadError("상품 코드를 확인해 주세요. 최대 20자입니다.")
+      return
+    }
+
+    if (!categories.some((c) => c.category_id === form.category_id)) {
+      setLoadError("유효한 카테고리를 선택해 주세요.")
+      return
+    }
+
+    if (!form.supplier_id) {
+      setLoadError("공급처를 선택해 주세요.")
+      return
+    }
+
+    setLoading(true)
+    setLoadError(null)
+
+    try {
+      const created = await itemsApi.create({
+        item_code: itemCode,
+        item_name: itemName,
+        category_id: form.category_id,
+        spec: form.spec.trim(),
+        unit,
+        unit_cost: form.unit_cost,
+        unit_price: form.unit_price,
+        safety_stock: form.safety_stock,
+        supplier_id: form.supplier_id,
+      })
+
+      const category = categories.find(
+        (c) => c.category_id === created.category_id
+      )
+      const supplier = suppliers.find(
+        (s) => s.partner_id === created.supplier_id
+      )
+
+      setItems((prev) => [{
+        ...created,
+        category_name: category?.category_name ?? "기타",
+        supplier_name: supplier?.name ?? "-",
+      }, ...prev])
+
+      setShowModal(false)
+      setForm(EMPTY_FORM)
+    } catch (error) {
+      setLoadError(errorMessage(error, "상품 등록에 실패했습니다."))
+    } finally {
+      setLoading(false)
+    }
   }
 
   /** 6.4 단종 처리 — is_active 토글 */
-  const toggleActive = (itemId: number) =>
-      setItems((prev) => prev.map((p) => (p.item_id === itemId ? { ...p, is_active: !p.is_active } : p)))
+  const toggleActive = async (itemId: number) => {
+    const target = items.find((item) => item.item_id === itemId)
+    if (!target || !target.is_active) return
+
+    if (!import.meta.env.VITE_API_BASE_URL) {
+      setLoadError("백엔드 연결이 필요합니다.")
+      return
+    }
+
+    const confirmed = window.confirm(
+      `${target.item_name} 상품을 단종 처리하시겠습니까?\\n단종 해제는 현재 지원되지 않습니다.`
+    )
+    if (!confirmed) return
+
+    setLoading(true)
+    setLoadError(null)
+
+    try {
+      await itemsApi.deactivate(itemId)
+      setItems((prev) =>
+        prev.map((item) =>
+          item.item_id === itemId
+            ? { ...item, is_active: false }
+            : item
+        )
+      )
+    } catch (error) {
+      setLoadError(errorMessage(error, "상품 단종 처리에 실패했습니다."))
+    } finally {
+      setLoading(false)
+    }
+  }
 
   // 6.6 카테고리 생성 / 6.7 수정 — 관리자 전용. 상품이 참조하므로 삭제는 없다
   const canManageCategory = user.role === "ADMIN"
@@ -224,41 +409,97 @@ export function ProductPage({ user }: Props) {
     setShowCategoryModal(true)
   }
 
-  const saveCategory = () => {
+  const saveCategory = async () => {
     const name = categoryForm.category_name.trim()
-    if (name === "") return setCategoryError("카테고리명은 필수입니다.")
-    if (name.length > 50) return setCategoryError("카테고리명은 최대 50자입니다.")
-    const duplicated = categories.some(
-      (c) => c.category_name === name && c.category_id !== editingCategory?.category_id,
-    )
-    if (duplicated) return setCategoryError("이미 존재하는 카테고리명입니다.")
+    const description = categoryForm.description.trim()
 
-    const description = categoryForm.description.trim() || null
-    if (editingCategory) {
-      setCategories((prev) =>
-        prev.map((c) =>
-          c.category_id === editingCategory.category_id
-            ? { ...c, category_name: name, description, updated_at: new Date().toISOString() }
-            : c,
-        ),
-      )
-    } else {
-      setCategories((prev) => [
-        ...prev,
-        {
-          category_id: Math.max(0, ...prev.map((c) => c.category_id)) + 1,
-          category_name: name,
-          description,
-          created_at: new Date().toISOString(),
-        },
-      ])
+    if (!name) {
+      setCategoryError("카테고리명은 필수입니다.")
+      return
     }
-    setShowCategoryModal(false)
+
+    if (name.length > 50) {
+      setCategoryError("카테고리명은 최대 50자입니다.")
+      return
+    }
+
+    if (description.length > 200) {
+      setCategoryError("카테고리 설명은 최대 200자입니다.")
+      return
+    }
+
+    const duplicated = categories.some(
+      (category) =>
+        category.category_name === name &&
+        category.category_id !== editingCategory?.category_id
+    )
+
+    if (duplicated) {
+      setCategoryError("이미 존재하는 카테고리명입니다.")
+      return
+    }
+
+    if (!import.meta.env.VITE_API_BASE_URL) {
+      setCategoryError("백엔드 연결이 필요합니다.")
+      return
+    }
+
+    setSavingCategory(true)
     setCategoryError(null)
+
+    try {
+      const body = {
+        category_name: name,
+        description,
+      }
+
+      if (editingCategory) {
+        const updated = await categoriesApi.update(
+          editingCategory.category_id,
+          body
+        )
+
+        setCategories((prev) =>
+          prev.map((category) =>
+            category.category_id === updated.category_id
+              ? updated
+              : category
+          )
+        )
+
+        setItems((prev) =>
+          prev.map((item) =>
+            item.category_id === updated.category_id
+              ? { ...item, category_name: updated.category_name }
+              : item
+          )
+        )
+      } else {
+        const created = await categoriesApi.create(body)
+        setCategories((prev) => [...prev, created])
+      }
+
+      setShowCategoryModal(false)
+      setEditingCategory(null)
+      setCategoryForm(EMPTY_CATEGORY_FORM)
+      setCategoryError(null)
+    } catch (error) {
+      setCategoryError(
+        errorMessage(error, "카테고리 저장에 실패했습니다.")
+      )
+    } finally {
+      setSavingCategory(false)
+    }
   }
 
   return (
       <div className="space-y-6">
+        {loading && (
+          <p className="text-sm text-gray-500">상품 데이터를 불러오는 중...</p>
+        )}
+        {loadError && (
+          <p className="text-sm text-red-600" role="alert">{loadError}</p>
+        )}
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
@@ -403,11 +644,12 @@ export function ProductPage({ user }: Props) {
                       </td>
                       <td className="px-4 py-3 text-center">
                         <button
-                            onClick={() => toggleActive(p.item_id)}
+                            disabled={!p.is_active || loading}
+                            onClick={() => void toggleActive(p.item_id)}
                             className="text-xs font-medium"
                             style={{ color: p.is_active ? "#DC2626" : "#059669" }}
                         >
-                          {p.is_active ? "단종 처리" : "단종 해제"}
+                          {p.is_active ? "단종 처리" : "단종됨"}
                         </button>
                       </td>
                     </tr>
@@ -515,7 +757,10 @@ export function ProductPage({ user }: Props) {
 
                 <div className="flex gap-3 mt-6 justify-end">
                   <button onClick={() => setShowCategoryModal(false)} className="px-5 py-2 text-sm font-medium border border-gray-300 rounded-lg text-gray-600">취소</button>
-                  <button onClick={saveCategory} className="px-5 py-2 text-sm font-medium text-white rounded-lg" style={{ background: "#0B3D91" }}>저장</button>
+                  <button
+                      onClick={() => void saveCategory()}
+                      disabled={savingCategory}
+                      className="px-5 py-2 text-sm font-medium text-white rounded-lg disabled:opacity-50" style={{ background: "#0B3D91" }}>저장</button>
                 </div>
               </div>
             </div>
@@ -544,6 +789,11 @@ export function ProductPage({ user }: Props) {
                   </svg>
                 </button>
 
+                {loadError && (
+                  <p role="alert" className="text-sm text-red-600 mb-3">
+                    {loadError}
+                  </p>
+                )}
                 <h3 className="font-semibold text-lg text-gray-900 mb-1">새 상품 등록</h3>
                 <p className="text-sm text-gray-500 mb-6">
                   카테고리를 고르면 상품코드 앞부분(IT-MED-카테고리코드)이 자동으로 정해집니다.
@@ -593,7 +843,7 @@ export function ProductPage({ user }: Props) {
                         onChange={(e) => update("supplier_id", Number(e.target.value))}
                         className={selectClass}
                     >
-                      {ACTIVE_SUPPLIERS.map((s) => (
+                      {suppliers.map((s) => (
                           <option key={s.partner_id} value={s.partner_id}>{s.name}</option>
                       ))}
                     </select>
