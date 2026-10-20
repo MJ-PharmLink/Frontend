@@ -1,8 +1,9 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
-import { CUSTOMERS, SALES } from "../data/sample"
+import { errorMessage, fetchAllPages, partnersApi, salesApi } from "../api"
+import { DETAIL_FETCH_CONCURRENCY, mapWithConcurrency } from "../lib/concurrency"
 import { formatDate, formatMoney, formatNumber, formatRate } from "../lib/domain"
-import type { SaleDetail } from "../types/api"
+import type { BusinessPartner, SaleDetail } from "../types/api"
 
 /**
  * 11.1 ~ 11.2 매출 — 관리자·영업 전용.
@@ -13,12 +14,30 @@ import type { SaleDetail } from "../types/api"
  */
 
 export default function SalesPage() {
+  const [sales, setSales] = useState<SaleDetail[]>([])
+  const [customers, setCustomers] = useState<BusinessPartner[]>([])
+  const [error, setError] = useState<string | null>(null)
   const [partnerFilter, setPartnerFilter] = useState<number | "전체">("전체")
   const [startDate, setStartDate] = useState("")
   const [endDate, setEndDate] = useState("")
   const [detail, setDetail] = useState<SaleDetail | null>(null)
 
-  const filtered = SALES.filter((s) => {
+  /**
+   * 11.1 매출 목록 → 11.2 상세. 목록 표의 주문번호와 상세 창의 품목이 필요해서
+   * 목록의 각 매출을 상세로 다시 받는다 (목록 응답에는 주문번호·품목이 없다)
+   */
+  useEffect(() => {
+    Promise.all([
+      fetchAllPages((page, page_size) => salesApi.list({ page, page_size }))
+        .then((rows) => mapWithConcurrency(rows, DETAIL_FETCH_CONCURRENCY, (row) => salesApi.get(row.sale_id)))
+        .then(setSales),
+      fetchAllPages((page, page_size) =>
+        partnersApi.list({ partner_type: "CUSTOMER", include_inactive: true, page, page_size }),
+      ).then(setCustomers),
+    ]).catch((err) => setError(errorMessage(err, "매출 목록을 불러오지 못했습니다.")))
+  }, [])
+
+  const filtered = sales.filter((s) => {
     const matchPartner = partnerFilter === "전체" || s.partner_id === partnerFilter
     const matchStart = startDate === "" || s.sale_date >= startDate
     const matchEnd = endDate === "" || s.sale_date <= endDate
@@ -58,6 +77,12 @@ export default function SalesPage() {
           </p>
         </div>
 
+        {error && (
+            <p className="px-4 py-2.5 text-sm" style={{ background: "#FEF2F2", color: "#DC2626", borderRadius: 6 }}>
+              {error}
+            </p>
+        )}
+
         {/* 요약 */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {[
@@ -82,7 +107,7 @@ export default function SalesPage() {
               style={{ border: "1px solid #E5EAF0", borderRadius: 7, background: "white" }}
           >
             <option value="전체">전체 거래처</option>
-            {CUSTOMERS.map((p) => (
+            {customers.map((p) => (
                 <option key={p.partner_id} value={p.partner_id}>{p.name}</option>
             ))}
           </select>

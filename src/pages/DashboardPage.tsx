@@ -1,6 +1,9 @@
+import { useEffect, useState } from "react"
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
 import type { AdminRoute, AuthUser } from "../App"
-import { DELIVERIES, INVENTORIES, ITEMS, ORDERS, PURCHASES, SALES, TODAY } from "../data/sample"
+import { dashboardApi, errorMessage, fetchAllPages, purchasesApi } from "../api"
+// 상품 목록 API(6.1)가 생기기 전까지 재고 부족 품목의 단위는 샘플 상품에서 찾는다
+import { ITEMS } from "../data/sample"
 import {
   DELIVERY_STATUS_LABELS,
   DELIVERY_STATUS_TONES,
@@ -9,6 +12,7 @@ import {
   firstDayOfMonthKst,
   formatDate,
   formatMoney,
+  todayKst,
 } from "../lib/domain"
 import type { DashboardSummary, LowStockItem, RecentOrder } from "../types/api"
 
@@ -25,101 +29,33 @@ interface Props {
   onNavigate: (r: AdminRoute) => void
 }
 
-const PERIOD = { start_date: firstDayOfMonthKst(), end_date: TODAY }
-
-const inPeriod = (date: string) => date >= PERIOD.start_date && date <= PERIOD.end_date
-
-/** 12.1 매출/매입/마진 요약 */
-function buildSummary(): DashboardSummary {
-  const periodSales = SALES.filter((s) => inPeriod(s.sale_date))
-  const total_sales = periodSales.reduce((sum, s) => sum + s.sales_amount, 0)
-  const total_margin = periodSales.reduce((sum, s) => sum + s.margin_amount, 0)
-  const total_purchases = PURCHASES.filter((p) => inPeriod(p.purchase_date)).reduce(
-    (sum, p) => sum + p.total_amount,
-    0,
-  )
-
-  return {
-    period: PERIOD,
-    total_sales,
-    total_purchases,
-    total_margin,
-    margin_rate: total_sales === 0 ? 0 : Number(((total_margin / total_sales) * 100).toFixed(2)),
-    pending_order_count: ORDERS.filter((o) => o.status === "PENDING").length,
-    waiting_delivery_count: DELIVERIES.filter((d) => d.status === "WAITING").length,
-    shipped_delivery_count: DELIVERIES.filter((d) => d.status === "SHIPPED").length,
-    low_stock_count: lowStockItems().length,
-    expiring_soon_count: INVENTORIES.filter((i) => i.expiry_status === "EXPIRING_SOON").length,
-    expired_count: INVENTORIES.filter((i) => i.expiry_status === "EXPIRED").length,
-  }
+/** 최근 6개월(이번 달 포함) 각 달의 [1일, 말일(이번 달은 오늘)] — 추이 차트는 달마다 12.1 요약을 받아 그린다 */
+function lastSixMonths(today: string) {
+  const [year, month] = today.split("-").map(Number)
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return Array.from({ length: 6 }, (_, i) => {
+    const d = new Date(Date.UTC(year, month - 1 - (5 - i), 1))
+    const y = d.getUTCFullYear()
+    const m = d.getUTCMonth() + 1
+    const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate()
+    const start = `${y}-${pad(m)}-01`
+    const end = i === 5 ? today : `${y}-${pad(m)}-${pad(lastDay)}`
+    return { month: `${m}월`, start, end }
+  })
 }
 
-/**
- * 12.2 재고 부족 품목.
- * 단종 상품과 안전재고가 0인 상품은 제외하고, 부족 수량 내림차순으로 정렬한다.
- */
-function lowStockItems(): LowStockItem[] {
-  return INVENTORIES.filter(
-    (inv) => inv.item_status === "ACTIVE" && inv.safety_stock > 0 && inv.quantity <= inv.safety_stock,
-  )
-    .map((inv) => ({
-      inventory_id: inv.inventory_id,
-      warehouse_id: inv.warehouse_id,
-      item_id: inv.item_id,
-      item_code: inv.item_code,
-      item_name: inv.item_name,
-      quantity: inv.quantity,
-      safety_stock: inv.safety_stock,
-      shortage_quantity: inv.safety_stock - inv.quantity,
-      stock_status: inv.stock_status,
-    }))
-    .sort((a, b) => b.shortage_quantity - a.shortage_quantity || a.inventory_id - b.inventory_id)
-}
-
-/** 12.3 최근 주문/납품 현황 — 납품이 아직 없으면 delivery_* 는 null */
-function recentOrders(limit = 5): RecentOrder[] {
-  return [...ORDERS]
-    .sort((a, b) => b.created_at.localeCompare(a.created_at))
-    .slice(0, limit)
-    .map((order) => {
-      const delivery = DELIVERIES.find((d) => d.order_id === order.order_id)
-      return {
-        order_id: order.order_id,
-        order_number: order.order_number,
-        partner_id: order.partner_id,
-        partner_name: order.partner_name,
-        order_status: order.status,
-        delivery_id: delivery?.delivery_id ?? null,
-        delivery_status: delivery?.status ?? null,
-        total_amount: order.total_amount,
-        created_at: order.created_at,
-      }
-    })
-}
-
-/** 최근 6개월 매출·매입·마진 추이 — 명세의 별도 엔드포인트는 없고 매출/매입에서 집계한다 */
-function monthlyTrend() {
-  const months: { key: string; month: string; sales: number; purchase: number; margin: number }[] = []
-  const base = new Date(`${TODAY}T00:00:00Z`)
-
-  for (let back = 5; back >= 0; back--) {
-    const d = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() - back, 1))
-    const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`
-    months.push({ key, month: `${d.getUTCMonth() + 1}월`, sales: 0, purchase: 0, margin: 0 })
-  }
-
-  for (const sale of SALES) {
-    const bucket = months.find((m) => m.key === sale.sale_date.slice(0, 7))
-    if (!bucket) continue
-    bucket.sales += sale.sales_amount
-    bucket.margin += sale.margin_amount
-  }
-  for (const purchase of PURCHASES) {
-    const bucket = months.find((m) => m.key === purchase.purchase_date.slice(0, 7))
-    if (bucket) bucket.purchase += purchase.total_amount
-  }
-
-  return months
+const EMPTY_SUMMARY: DashboardSummary = {
+  period: { start_date: firstDayOfMonthKst(), end_date: todayKst() },
+  total_sales: 0,
+  total_purchases: 0,
+  total_margin: 0,
+  margin_rate: 0,
+  pending_order_count: 0,
+  waiting_delivery_count: 0,
+  shipped_delivery_count: 0,
+  low_stock_count: 0,
+  expiring_soon_count: 0,
+  expired_count: 0,
 }
 
 function compact(n: number) {
@@ -129,23 +65,58 @@ function compact(n: number) {
 }
 
 export default function DashboardPage({ user, onNavigate }: Props) {
-  const summary = buildSummary()
-  const lowStock = lowStockItems()
-  const orders = recentOrders()
-  const trend = monthlyTrend()
+  const [summary, setSummary] = useState<DashboardSummary>(EMPTY_SUMMARY)
+  const [lowStock, setLowStock] = useState<LowStockItem[]>([])
+  const [orders, setOrders] = useState<RecentOrder[]>([])
+  const [trend, setTrend] = useState<{ month: string; sales: number; purchase: number; margin: number }[]>([])
+  const [error, setError] = useState<string | null>(null)
+  // 기간 매입 건수(10.1 목록의 total_count). 매입 조회 권한이 없는 영업 계정은 "-"
+  const [purchaseCount, setPurchaseCount] = useState<number | null>(null)
+  const today = todayKst()
+
+  /**
+   * 12.2 재고 부족 전체, 12.3 최근 주문 5건, 최근 6개월 추이(달마다 12.1 요약)를 함께 받는다.
+   * 요약 카드는 추이의 이번 달(1일 ~ 오늘) 요약을 쓴다
+   */
+  useEffect(() => {
+    Promise.all([
+      fetchAllPages((page, page_size) => dashboardApi.lowStockItems({ page, page_size })).then(setLowStock),
+      dashboardApi.recentOrders(5).then(setOrders),
+      // 마지막 달(이번 달 1일 ~ 오늘)은 기간 미지정 요약과 같은 기간이라 요약 카드에도 그대로 쓴다
+      Promise.all(
+        lastSixMonths(today).map((m) => dashboardApi.summary({ start_date: m.start, end_date: m.end })),
+      ).then((months) => {
+        setSummary(months[months.length - 1])
+        setTrend(
+          months.map((s, i) => ({
+            month: lastSixMonths(today)[i].month,
+            sales: s.total_sales,
+            purchase: s.total_purchases,
+            margin: s.total_margin,
+          })),
+        )
+      }),
+    ]).catch((err) => setError(errorMessage(err, "대시보드 정보를 불러오지 못했습니다.")))
+    if (user.role !== "SALES") {
+      purchasesApi
+        .list({ start_date: firstDayOfMonthKst(), end_date: today, page: 1, page_size: 1 })
+        .then((page) => setPurchaseCount(page.pagination.total_count))
+        .catch(() => setPurchaseCount(null))
+    }
+  }, [today, user.role])
 
   const cards = [
     {
       label: "기간 매출",
       value: compact(summary.total_sales),
-      sub: `${formatDate(PERIOD.start_date)} ~ ${formatDate(PERIOD.end_date)}`,
+      sub: `${formatDate(summary.period.start_date)} ~ ${formatDate(summary.period.end_date)}`,
       color: "#0B3D91",
       icon: <path d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6" />,
     },
     {
       label: "기간 매입",
       value: compact(summary.total_purchases),
-      sub: `매입 ${PURCHASES.filter((p) => inPeriod(p.purchase_date)).length}건`,
+      sub: `매입 ${purchaseCount ?? "-"}건`,
       color: "#1677FF",
       icon: <><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z" /><line x1="3" y1="6" x2="21" y2="6" /></>,
     },
@@ -179,9 +150,15 @@ export default function DashboardPage({ user, onNavigate }: Props) {
             안녕하세요, {user.name}님 👋
           </h1>
           <p className="text-sm mt-1" style={{ color: "#888" }}>
-            {formatDate(TODAY)} 기준 팜링크 ERP 현황입니다.
+            {formatDate(today)} 기준 팜링크 ERP 현황입니다.
           </p>
         </div>
+
+        {error && (
+            <p className="px-4 py-2.5 text-sm" style={{ background: "#FEF2F2", color: "#DC2626", borderRadius: 6 }}>
+              {error}
+            </p>
+        )}
 
         {/* KPI Cards */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

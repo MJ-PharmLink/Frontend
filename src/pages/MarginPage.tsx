@@ -1,7 +1,9 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
-import { ITEMS, SALES, TODAY } from "../data/sample"
-import { firstDayOfMonthKst, formatDate, formatMoney, formatRate } from "../lib/domain"
+import { errorMessage, salesApi } from "../api"
+// 상품 목록 API(6.1)가 생기기 전까지 안내 문구의 등록 상품 수는 샘플 상품 수를 쓴다
+import { ITEMS } from "../data/sample"
+import { firstDayOfMonthKst, formatDate, formatMoney, formatRate, todayKst } from "../lib/domain"
 import { MARGIN_GROUP_BY } from "../types/api"
 import type { MarginAmounts, MarginGroupBy, MarginItemGroup, MarginPartnerGroup } from "../types/api"
 
@@ -13,73 +15,56 @@ import type { MarginAmounts, MarginGroupBy, MarginItemGroup, MarginPartnerGroup 
  * SUM(margin) / SUM(sales) × 100 으로 계산한다(3.16).
  */
 
-const BAR_COLORS = ["#0B3D91", "#1677FF", "#059669", "#7C3AED", "#C2410C", "#0891B2", "#BE185D"]
+const EMPTY_AMOUNTS: MarginAmounts = { sales_amount: 0, cost_amount: 0, margin_amount: 0, margin_rate: 0 }
 
-function rateOf(margin: number, sales: number): number {
-  return sales === 0 ? 0 : Number(((margin / sales) * 100).toFixed(2))
-}
+const BAR_COLORS = ["#0B3D91", "#1677FF", "#059669", "#7C3AED", "#C2410C", "#0891B2", "#BE185D"]
 
 export default function MarginPage() {
   const [startDate, setStartDate] = useState(firstDayOfMonthKst())
-  const [endDate, setEndDate] = useState(TODAY)
+  const [endDate, setEndDate] = useState(todayKst())
   const [groupBy, setGroupBy] = useState<MarginGroupBy>("PARTNER")
 
   const invalidRange = startDate > endDate
 
-  const inRange = SALES.filter((s) => !invalidRange && s.sale_date >= startDate && s.sale_date <= endDate)
+  const [fetchedSummary, setSummary] = useState<MarginAmounts>(EMPTY_AMOUNTS)
+  const [fetchedGroups, setGroups] = useState<(MarginPartnerGroup | MarginItemGroup)[]>([])
+  const [fetchedSaleCount, setSaleCount] = useState(0)
+  const [error, setError] = useState<string | null>(null)
 
-  const summary: MarginAmounts = (() => {
-    const sales_amount = inRange.reduce((sum, s) => sum + s.sales_amount, 0)
-    const cost_amount = inRange.reduce((sum, s) => sum + s.cost_amount, 0)
-    const margin_amount = sales_amount - cost_amount
-    return { sales_amount, cost_amount, margin_amount, margin_rate: rateOf(margin_amount, sales_amount) }
-  })()
+  /**
+   * 11.3 마진 집계 (summary + group_by별 groups, 서버가 마진 큰 순으로 정렬) 와
+   * 같은 기간의 매출 건수(11.1 목록의 total_count)를 함께 받는다
+   */
+  useEffect(() => {
+    if (invalidRange) return
+    let cancelled = false
+    setError(null)
+    // 새 조건의 응답이 오기 전에 이전 집계가 남아 보이지 않도록 비운다
+    setSummary(EMPTY_AMOUNTS)
+    setGroups([])
+    setSaleCount(0)
+    Promise.all([
+      salesApi.margins({ start_date: startDate, end_date: endDate, group_by: groupBy }),
+      salesApi.list({ start_date: startDate, end_date: endDate, page: 1, page_size: 1 }),
+    ])
+      .then(([margins, sales]) => {
+        if (cancelled) return
+        setSummary(margins.summary)
+        setGroups(margins.groups ?? [])
+        setSaleCount(sales.pagination.total_count)
+      })
+      .catch((err) => {
+        if (!cancelled) setError(errorMessage(err, "마진 집계를 불러오지 못했습니다."))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [startDate, endDate, groupBy, invalidRange])
 
-  /** group_by = PARTNER — 매출 레코드를 거래처로 묶는다 */
-  const partnerGroups: MarginPartnerGroup[] = Object.values(
-    inRange.reduce<Record<number, MarginPartnerGroup>>((acc, s) => {
-      acc[s.partner_id] ??= {
-        partner_id: s.partner_id,
-        partner_name: s.partner_name,
-        sales_amount: 0,
-        cost_amount: 0,
-        margin_amount: 0,
-        margin_rate: 0,
-      }
-      acc[s.partner_id].sales_amount += s.sales_amount
-      acc[s.partner_id].cost_amount += s.cost_amount
-      acc[s.partner_id].margin_amount += s.margin_amount
-      return acc
-    }, {}),
-  )
-    .map((g) => ({ ...g, margin_rate: rateOf(g.margin_amount, g.sales_amount) }))
-    .sort((a, b) => b.margin_amount - a.margin_amount)
-
-  /** group_by = ITEM — 매출 품목(order_items 스냅샷)을 상품으로 묶는다 */
-  const itemGroups: MarginItemGroup[] = Object.values(
-    inRange
-      .flatMap((s) => s.items)
-      .reduce<Record<number, MarginItemGroup>>((acc, line) => {
-        acc[line.item_id] ??= {
-          item_id: line.item_id,
-          item_code: line.item_code,
-          item_name: line.item_name,
-          sales_amount: 0,
-          cost_amount: 0,
-          margin_amount: 0,
-          margin_rate: 0,
-        }
-        acc[line.item_id].sales_amount += line.sales_amount
-        acc[line.item_id].cost_amount += line.cost_amount
-        acc[line.item_id].margin_amount += line.margin_amount
-        return acc
-      }, {}),
-  )
-    .map((g) => ({ ...g, margin_rate: rateOf(g.margin_amount, g.sales_amount) }))
-    .sort((a, b) => b.margin_amount - a.margin_amount)
-
-  const groups: (MarginPartnerGroup | MarginItemGroup)[] =
-    groupBy === "PARTNER" ? partnerGroups : itemGroups
+  // 기간이 잘못되면 서버에 묻지 않고 빈 집계를 보여 준다
+  const summary = invalidRange ? EMPTY_AMOUNTS : fetchedSummary
+  const groups = invalidRange ? [] : fetchedGroups
+  const saleCount = invalidRange ? 0 : fetchedSaleCount
 
   const labelOf = (g: MarginPartnerGroup | MarginItemGroup) =>
     "partner_name" in g ? g.partner_name : g.item_name
@@ -128,9 +113,15 @@ export default function MarginPage() {
           </div>
 
           <span className="ml-auto text-xs" style={{ color: "#999" }}>
-            {formatDate(startDate)} ~ {formatDate(endDate)} · 매출 {inRange.length}건
+            {formatDate(startDate)} ~ {formatDate(endDate)} · 매출 {saleCount}건
           </span>
         </div>
+
+        {error && !invalidRange && (
+            <p className="px-4 py-2.5 text-sm" style={{ background: "#FEF2F2", color: "#DC2626", borderRadius: 6 }}>
+              {error}
+            </p>
+        )}
 
         {invalidRange && (
             <p className="px-4 py-2.5 text-sm" style={{ background: "#FEF2F2", color: "#DC2626", borderRadius: 6 }}>
