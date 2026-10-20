@@ -64,7 +64,7 @@ const NAV_ITEMS: NavItem[] = [
     {
         id: "orders",
         label: "주문 관리",
-        roles: ["ADMIN", "SALES", "WAREHOUSE"],
+        roles: ["ADMIN", "SALES"],
         icon: (
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2" />
@@ -111,7 +111,7 @@ const NAV_ITEMS: NavItem[] = [
     {
         id: "margin",
         label: "마진 분석",
-        roles: ["ADMIN", "WAREHOUSE"],
+        roles: ["ADMIN", "SALES"],
         icon: (
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="18" y1="20" x2="18" y2="10" />
