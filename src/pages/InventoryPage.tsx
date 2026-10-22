@@ -1,13 +1,17 @@
-import { useState } from "react"
+import { useEffect, useMemo, useState } from "react"
+import {
+  categoriesApi,
+  errorMessage,
+  fetchAllPages,
+  inventoriesApi,
+  itemsApi,
+} from "../api"
 import {
   CATEGORIES,
-  EXPIRING_LOTS,
   EXPIRING_SOON_DAYS,
   INVENTORY_DETAILS,
   ITEMS,
-  TRANSACTIONS,
   WAREHOUSES,
-  daysUntil,
 } from "../data/sample"
 import {
   ADJUSTMENT_REASON_LABELS,
@@ -26,7 +30,11 @@ import { ADJUSTMENT_REASONS, ADJUSTMENT_TYPES, EXPIRY_STATUSES, STOCK_STATUSES }
 import type {
   AdjustmentReason,
   AdjustmentType,
+  Category,
   ExpiryStatus,
+  InventoryTransaction,
+  Item,
+  ItemStatus,
   InventoryDetail,
   StockStatus,
 } from "../types/api"
@@ -40,7 +48,21 @@ import type {
  */
 
 /** 재고 응답(7.1)에는 category_id가 없어 상품 목록에서 미리 뽑아둔다 */
-const ITEM_CATEGORY = new Map<number, number>(ITEMS.map((i) => [i.item_id, i.category_id]))
+function daysUntil(dateStr: string): number {
+  const today = new Date().toLocaleDateString("sv-SE", {
+    timeZone: "Asia/Seoul",
+  })
+  const target = Date.parse(`${dateStr}T00:00:00+09:00`)
+  const base = Date.parse(`${today}T00:00:00+09:00`)
+  return Math.round((target - base) / 86400000)
+}
+
+function expiryStatusOf(dateStr: string): ExpiryStatus {
+  const days = daysUntil(dateStr)
+  if (days < 0) return "EXPIRED"
+  if (days <= EXPIRING_SOON_DAYS) return "EXPIRING_SOON"
+  return "NORMAL"
+}
 
 type TabKey = "stock" | "expiry" | "history"
 
@@ -63,7 +85,19 @@ const EMPTY_ADJUSTMENT = {
 }
 
 export default function InventoryPage() {
-  const [inventories, setInventories] = useState<InventoryDetail[]>(INVENTORY_DETAILS)
+  const [inventories, setInventories] = useState<InventoryDetail[]>(
+    import.meta.env.VITE_API_BASE_URL ? [] : INVENTORY_DETAILS
+  )
+  const [categories, setCategories] = useState<Category[]>(
+    import.meta.env.VITE_API_BASE_URL ? [] : CATEGORIES
+  )
+  const [itemCategory, setItemCategory] = useState<Map<number, number>>(
+    () => new Map(ITEMS.map((item) => [item.item_id, item.category_id]))
+  )
+  const [historyRows, setHistoryRows] = useState<InventoryTransaction[]>([])
+  const [inventoryLoading, setInventoryLoading] = useState(false)
+  const [inventoryError, setInventoryError] = useState<string | null>(null)
+  const ITEM_CATEGORY = itemCategory
   const [tab, setTab] = useState<TabKey>("stock")
   const [keyword, setKeyword] = useState("")
   const [categoryFilter, setCategoryFilter] = useState<number | "전체">("전체")
@@ -73,6 +107,146 @@ export default function InventoryPage() {
   const [showAdjust, setShowAdjust] = useState(false)
   const [form, setForm] = useState(EMPTY_ADJUSTMENT)
   const [historyType, setHistoryType] = useState<"전체" | "IN" | "OUT" | "ADJUST">("전체")
+
+  useEffect(() => {
+    if (!import.meta.env.VITE_API_BASE_URL) return
+
+    let cancelled = false
+
+    async function loadRealInventories() {
+      setInventoryLoading(true)
+      setInventoryError(null)
+
+      try {
+        const [inventoryRows, itemRows, categoryRows, transactionRows] =
+          await Promise.all([
+            fetchAllPages((page, pageSize) =>
+              inventoriesApi.list({ page, page_size: pageSize })
+            ),
+            fetchAllPages((page, pageSize) =>
+              itemsApi.list({ page, page_size: pageSize })
+            ),
+            categoriesApi.list(),
+            fetchAllPages((page, pageSize) =>
+              inventoriesApi.transactions({ page, page_size: pageSize })
+            ),
+          ])
+
+        const itemMap = new Map<number, Item>(
+          itemRows.map((item) => [item.item_id, item])
+        )
+
+        const lotLists = await Promise.all(
+          inventoryRows.map((inventory) =>
+            inventoriesApi.lots(inventory.inventory_id)
+          )
+        )
+
+        const lotNameMap = new Map<number, string>()
+
+        const completeInventories: InventoryDetail[] = inventoryRows.map(
+          (inventory, index) => {
+            const rawLots = lotLists[index]
+            const lots = rawLots
+              .map((lot) => {
+                lotNameMap.set(lot.lot_id, lot.lot_number)
+                return {
+                  ...lot,
+                  received_at: "",
+                  expiry_status: expiryStatusOf(lot.expiry_date),
+                }
+              })
+              .sort((a, b) => a.expiry_date.localeCompare(b.expiry_date))
+
+            const activeLots = lots.filter((lot) => lot.quantity > 0)
+            const available = activeLots
+              .filter((lot) => lot.expiry_status !== "EXPIRED")
+              .reduce((sum, lot) => sum + lot.quantity, 0)
+
+            const status: StockStatus =
+              inventory.quantity === 0
+                ? "OUT_OF_STOCK"
+                : inventory.quantity <= inventory.safety_stock
+                  ? "LOW_STOCK"
+                  : "NORMAL"
+
+            const expiryStatus: ExpiryStatus =
+              activeLots.some((lot) => lot.expiry_status === "EXPIRED")
+                ? "EXPIRED"
+                : activeLots.some((lot) => lot.expiry_status === "EXPIRING_SOON")
+                  ? "EXPIRING_SOON"
+                  : "NORMAL"
+
+            const item = itemMap.get(inventory.item_id)
+            const itemStatus: ItemStatus =
+              item?.is_active === false ? "DISCONTINUED" : "ACTIVE"
+
+            return {
+              ...inventory,
+              item_status: itemStatus,
+              available_quantity: available,
+              stock_status: status,
+              expiry_status: expiryStatus,
+              lots,
+            }
+          }
+        )
+
+        const completeHistory = transactionRows.map((transaction) => {
+          const item = itemMap.get(transaction.item_id)
+          return {
+            ...transaction,
+            item_code: item?.item_code ?? `#${transaction.item_id}`,
+            item_name: item?.item_name ?? `상품 #${transaction.item_id}`,
+            lot_number: lotNameMap.get(transaction.lot_id) ?? "-",
+          }
+        })
+
+        if (cancelled) return
+
+        setInventories(completeInventories)
+        setCategories(categoryRows)
+        setItemCategory(
+          new Map(itemRows.map((item) => [item.item_id, item.category_id]))
+        )
+        setHistoryRows(completeHistory)
+      } catch (error) {
+        if (!cancelled) {
+          setInventoryError(
+            errorMessage(error, "실제 재고 데이터를 불러오지 못했습니다.")
+          )
+        }
+      } finally {
+        if (!cancelled) setInventoryLoading(false)
+      }
+    }
+
+    void loadRealInventories()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const expiringLots = useMemo(
+    () =>
+      inventories.flatMap((inv) =>
+        inv.lots
+          .filter(
+            (lot) => lot.quantity > 0 && lot.expiry_status !== "NORMAL"
+          )
+          .map((lot) => ({
+            ...lot,
+            inventory_id: inv.inventory_id,
+            warehouse_id: inv.warehouse_id,
+            item_id: inv.item_id,
+            item_code: inv.item_code,
+            item_name: inv.item_name,
+            days_until_expiry: daysUntil(lot.expiry_date),
+          }))
+      ),
+    [inventories]
+  )
 
   // 7.1 필터 — keyword(상품명·코드), 카테고리, 재고 상태, 유통기한 상태
   const filtered = inventories.filter((inv) => {
@@ -97,7 +271,7 @@ export default function InventoryPage() {
     expired: inventories.filter((i) => i.expiry_status === "EXPIRED").length,
   }
 
-  const transactions = TRANSACTIONS.filter((t) => {
+  const transactions = historyRows.filter((t) => {
     if (historyType === "전체") return true
     if (historyType === "ADJUST") return t.type === "ADJUST_IN" || t.type === "ADJUST_OUT"
     return t.type === historyType
@@ -116,24 +290,71 @@ export default function InventoryPage() {
   }
 
   /** 7.4 재고 조정 — INCREASE/DECREASE 모두 로트 단위로 수량을 바꾼다 */
-  const applyAdjustment = () => {
-    setInventories((prev) =>
-      prev.map((inv) => {
-        if (inv.item_id !== form.item_id) return inv
-        const delta = form.adjustment_type === "INCREASE" ? form.quantity : -form.quantity
-        const lots = inv.lots.map((lot) =>
-          lot.lot_id === form.lot_id ? { ...lot, quantity: Math.max(0, lot.quantity + delta) } : lot,
-        )
-        const quantity = lots.reduce((sum, l) => sum + l.quantity, 0)
-        const available = lots
-          .filter((l) => l.expiry_status !== "EXPIRED")
-          .reduce((sum, l) => sum + l.quantity, 0)
-        const stock_status: StockStatus =
-          quantity === 0 ? "OUT_OF_STOCK" : quantity <= inv.safety_stock ? "LOW_STOCK" : "NORMAL"
-        return { ...inv, lots, quantity, available_quantity: available, stock_status }
-      }),
+  const [adjusting, setAdjusting] = useState(false)
+  const [adjustError, setAdjustError] = useState<string | null>(null)
+
+  const applyAdjustment = async () => {
+    if (adjusting) return
+
+    const inventory = inventories.find(
+      (inv) => inv.item_id === form.item_id &&
+        inv.warehouse_id === form.warehouse_id
     )
-    setShowAdjust(false)
+
+    if (!inventory) {
+      setAdjustError("선택한 상품의 재고를 찾을 수 없습니다.")
+      return
+    }
+
+    const lot = inventory.lots.find(
+      (entry) => entry.lot_id === form.lot_id
+    )
+
+    if (!lot) {
+      setAdjustError("실제 DB에 존재하는 LOT를 선택해 주세요.")
+      return
+    }
+
+    if (!Number.isInteger(form.quantity) || form.quantity < 1) {
+      setAdjustError("조정 수량은 1 이상의 정수여야 합니다.")
+      return
+    }
+
+    if (form.adjustment_type === "DECREASE" &&
+        form.quantity > lot.quantity) {
+      setAdjustError("LOT의 현재 수량보다 많이 감소시킬 수 없습니다.")
+      return
+    }
+
+    const message =
+      `${inventory.item_name} / ${lot.lot_number}\\n` +
+      `${form.adjustment_type === "INCREASE" ? "증가" : "감소"} ` +
+      `${form.quantity}개를 실제 DB에 반영하시겠습니까?`
+
+    if (!window.confirm(message)) return
+
+    setAdjusting(true)
+    setAdjustError(null)
+
+    try {
+      await inventoriesApi.adjust({
+        warehouse_id: inventory.warehouse_id,
+        item_id: inventory.item_id,
+        lot_id: lot.lot_id,
+        adjustment_type: form.adjustment_type,
+        quantity: form.quantity,
+        reason: form.reason,
+        memo: form.memo.trim(),
+      })
+
+      // 서버에서 실제 재고, LOT, 이력을 다시 조회한다.
+      window.location.reload()
+    } catch (error) {
+      setAdjustError(
+        errorMessage(error, "재고 조정에 실패했습니다.")
+      )
+      setAdjusting(false)
+    }
   }
 
   const chipStyle = (active: boolean) => ({
@@ -143,15 +364,24 @@ export default function InventoryPage() {
 
   return (
       <div className="space-y-5">
+        {inventoryLoading && (
+          <p className="text-sm text-gray-500">실제 재고를 불러오는 중...</p>
+        )}
+        {inventoryError && (
+          <p role="alert" className="text-sm text-red-600">
+            {inventoryError}
+          </p>
+        )}
         {/* Header */}
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div>
             <h2 className="font-semibold text-lg" style={{ color: "#1a1a1a" }}>재고 관리</h2>
             <p className="text-sm mt-0.5" style={{ color: "#888" }}>
-              {WAREHOUSES[0].name} · {summary.total_item_count}개 품목 · 총 {formatNumber(summary.total_quantity)}
+              {inventories.length === 0 ? "재고 현황" : "전체 창고"} · {summary.total_item_count}개 품목 · 총 {formatNumber(summary.total_quantity)}
             </p>
           </div>
           <button
+              disabled={inventoryLoading || inventories.length === 0}
               onClick={() => openAdjust()}
               className="px-4 py-2 text-sm font-medium"
               style={{ background: "#0B3D91", color: "white", borderRadius: 7 }}
@@ -226,7 +456,7 @@ export default function InventoryPage() {
                 <button onClick={() => setCategoryFilter("전체")} className="px-3 py-1 text-xs font-medium rounded-full transition-all" style={chipStyle(categoryFilter === "전체")}>
                   전체 ({inventories.length})
                 </button>
-                {CATEGORIES.map((cat) => {
+                {categories.map((cat) => {
                   const count = inventories.filter((i) => ITEM_CATEGORY.get(i.item_id) === cat.category_id).length
                   if (count === 0) return null
                   return (
@@ -277,7 +507,7 @@ export default function InventoryPage() {
                     </thead>
                     <tbody>
                     {filtered.map((inv, i) => {
-                      const catName = CATEGORIES.find((c) => c.category_id === ITEM_CATEGORY.get(inv.item_id))?.category_name ?? "기타"
+                      const catName = categories.find((c) => c.category_id === ITEM_CATEGORY.get(inv.item_id))?.category_name ?? "기타"
                       const catStyle = categoryTone(catName)
                       const stockTone = STOCK_STATUS_TONES[inv.stock_status]
                       const expiryTone = EXPIRY_STATUS_TONES[inv.expiry_status]
@@ -343,7 +573,7 @@ export default function InventoryPage() {
                   </tr>
                   </thead>
                   <tbody>
-                  {EXPIRING_LOTS.map((lot, i) => {
+                  {expiringLots.map((lot, i) => {
                     const tone = EXPIRY_STATUS_TONES[lot.expiry_status]
                     return (
                         <tr key={lot.lot_id} style={{ borderTop: i > 0 ? "1px solid #F3F4F6" : "none" }}>
@@ -366,7 +596,7 @@ export default function InventoryPage() {
                   </tbody>
                 </table>
               </div>
-              {EXPIRING_LOTS.length === 0 && (
+              {expiringLots.length === 0 && (
                   <div className="py-14 text-center text-sm" style={{ color: "#999" }}>임박하거나 만료된 로트가 없습니다.</div>
               )}
             </div>
@@ -483,7 +713,7 @@ export default function InventoryPage() {
                             {EXPIRY_STATUS_LABELS[lot.expiry_status]}
                           </span>
                         </td>
-                        <td className="px-3 py-2 text-xs" style={{ color: "#999" }}>{formatDate(lot.received_at)}</td>
+                        <td className="px-3 py-2 text-xs" style={{ color: "#999" }}>{lot.received_at ? formatDate(lot.received_at) : "-"}</td>
                       </tr>
                   ))}
                   </tbody>
@@ -492,6 +722,7 @@ export default function InventoryPage() {
                 <div className="flex justify-end gap-3 mt-7">
                   <button onClick={() => setDetail(null)} className="px-5 py-2 text-sm font-medium" style={{ border: "1px solid #E5EAF0", borderRadius: 7, color: "#666" }}>닫기</button>
                   <button
+                      disabled={inventoryLoading}
                       onClick={() => { openAdjust(detail); setDetail(null) }}
                       className="px-5 py-2 text-sm font-medium"
                       style={{ background: "#0B3D91", color: "white", borderRadius: 7 }}
@@ -512,6 +743,11 @@ export default function InventoryPage() {
                     <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
                   </svg>
                 </button>
+                {adjustError && (
+                  <p role="alert" className="mb-3 text-sm text-red-600">
+                    {adjustError}
+                  </p>
+                )}
                 <h3 className="font-semibold text-lg mb-1" style={{ color: "#1a1a1a" }}>재고 조정</h3>
                 <p className="text-sm mb-6" style={{ color: "#888" }}>
                   파손·만료 폐기·실사 보정·반품 입고 등 매입/주문과 무관한 재고 변동을 기록합니다.
@@ -606,7 +842,7 @@ export default function InventoryPage() {
 
                 <div className="flex gap-3 mt-7 justify-end">
                   <button onClick={() => setShowAdjust(false)} className="px-5 py-2 text-sm font-medium" style={{ border: "1px solid #E5EAF0", borderRadius: 7, color: "#666" }}>취소</button>
-                  <button onClick={applyAdjustment} className="px-5 py-2 text-sm font-medium" style={{ background: "#0B3D91", color: "white", borderRadius: 7 }}>조정 반영</button>
+                  <button disabled={adjusting} onClick={() => void applyAdjustment()} className="px-5 py-2 text-sm font-medium" style={{ background: "#0B3D91", color: "white", borderRadius: 7 }}>조정 반영</button>
                 </div>
               </div>
             </div>
