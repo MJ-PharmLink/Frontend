@@ -4,6 +4,7 @@ import {
   errorMessage,
   fetchAllPages,
   inventoriesApi,
+  warehousesApi,
   itemsApi,
 } from "../api"
 import {
@@ -36,6 +37,7 @@ import type {
   Item,
   ItemStatus,
   InventoryDetail,
+  Warehouse,
   StockStatus,
 } from "../types/api"
 
@@ -95,6 +97,8 @@ export default function InventoryPage() {
     () => new Map(ITEMS.map((item) => [item.item_id, item.category_id]))
   )
   const [historyRows, setHistoryRows] = useState<InventoryTransaction[]>([])
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([])
+  const [warehouseFilter, setWarehouseFilter] = useState<number | "전체">("전체")
   const [inventoryLoading, setInventoryLoading] = useState(false)
   const [inventoryError, setInventoryError] = useState<string | null>(null)
   const ITEM_CATEGORY = itemCategory
@@ -118,7 +122,7 @@ export default function InventoryPage() {
       setInventoryError(null)
 
       try {
-        const [inventoryRows, itemRows, categoryRows, transactionRows] =
+        const [inventoryRows, itemRows, categoryRows, transactionRows, warehouseRows] =
           await Promise.all([
             fetchAllPages((page, pageSize) =>
               inventoriesApi.list({ page, page_size: pageSize })
@@ -130,6 +134,7 @@ export default function InventoryPage() {
             fetchAllPages((page, pageSize) =>
               inventoriesApi.transactions({ page, page_size: pageSize })
             ),
+            warehousesApi.list(),
           ])
 
         const itemMap = new Map<number, Item>(
@@ -206,6 +211,7 @@ export default function InventoryPage() {
 
         setInventories(completeInventories)
         setCategories(categoryRows)
+        setWarehouses(warehouseRows)
         setItemCategory(
           new Map(itemRows.map((item) => [item.item_id, item.category_id]))
         )
@@ -228,9 +234,13 @@ export default function InventoryPage() {
     }
   }, [])
 
+  const visibleInventories = warehouseFilter === "전체"
+    ? inventories
+    : inventories.filter((inv) => inv.warehouse_id === warehouseFilter)
+
   const expiringLots = useMemo(
     () =>
-      inventories.flatMap((inv) =>
+      visibleInventories.flatMap((inv) =>
         inv.lots
           .filter(
             (lot) => lot.quantity > 0 && lot.expiry_status !== "NORMAL"
@@ -245,11 +255,11 @@ export default function InventoryPage() {
             days_until_expiry: daysUntil(lot.expiry_date),
           }))
       ),
-    [inventories]
+    [visibleInventories]
   )
 
   // 7.1 필터 — keyword(상품명·코드), 카테고리, 재고 상태, 유통기한 상태
-  const filtered = inventories.filter((inv) => {
+  const filtered = visibleInventories.filter((inv) => {
     const matchKeyword =
       keyword === "" || inv.item_name.includes(keyword) || inv.item_code.includes(keyword)
     const matchCategory = categoryFilter === "전체" || ITEM_CATEGORY.get(inv.item_id) === categoryFilter
@@ -258,29 +268,30 @@ export default function InventoryPage() {
     return matchKeyword && matchCategory && matchStock && matchExpiry
   })
 
-  const lowStock = inventories.filter(
+  const lowStock = visibleInventories.filter(
     (inv) => inv.item_status === "ACTIVE" && inv.safety_stock > 0 && inv.quantity <= inv.safety_stock,
   )
 
   const summary = {
-    total_item_count: inventories.length,
-    total_quantity: inventories.reduce((sum, i) => sum + i.quantity, 0),
-    low_stock: inventories.filter((i) => i.stock_status === "LOW_STOCK").length,
-    out_of_stock: inventories.filter((i) => i.stock_status === "OUT_OF_STOCK").length,
-    expiring_soon: inventories.filter((i) => i.expiry_status === "EXPIRING_SOON").length,
-    expired: inventories.filter((i) => i.expiry_status === "EXPIRED").length,
+    total_item_count: visibleInventories.length,
+    total_quantity: visibleInventories.reduce((sum, i) => sum + i.quantity, 0),
+    low_stock: visibleInventories.filter((i) => i.stock_status === "LOW_STOCK").length,
+    out_of_stock: visibleInventories.filter((i) => i.stock_status === "OUT_OF_STOCK").length,
+    expiring_soon: visibleInventories.filter((i) => i.expiry_status === "EXPIRING_SOON").length,
+    expired: visibleInventories.filter((i) => i.expiry_status === "EXPIRED").length,
   }
 
   const transactions = historyRows.filter((t) => {
+    if (warehouseFilter !== "전체" && t.warehouse_id !== warehouseFilter) return false
     if (historyType === "전체") return true
     if (historyType === "ADJUST") return t.type === "ADJUST_IN" || t.type === "ADJUST_OUT"
     return t.type === historyType
   })
 
-  const selectedInventory = inventories.find((i) => i.item_id === form.item_id)
+  const selectedInventory = visibleInventories.find((i) => i.item_id === form.item_id)
 
   const openAdjust = (inv?: InventoryDetail) => {
-    const target = inv ?? inventories[0]
+    const target = inv ?? visibleInventories[0]
     setForm({
       ...EMPTY_ADJUSTMENT,
       item_id: target.item_id,
@@ -377,7 +388,7 @@ export default function InventoryPage() {
           <div>
             <h2 className="font-semibold text-lg" style={{ color: "#1a1a1a" }}>재고 관리</h2>
             <p className="text-sm mt-0.5" style={{ color: "#888" }}>
-              {inventories.length === 0 ? "재고 현황" : "전체 창고"} · {summary.total_item_count}개 품목 · 총 {formatNumber(summary.total_quantity)}
+              {inventories.length === 0 ? "재고 현황" : warehouseFilter === "전체" ? "전체 창고" : warehouses.find((w) => w.warehouse_id === warehouseFilter)?.name ?? "선택 창고"} · {summary.total_item_count}개 품목 · 총 {formatNumber(summary.total_quantity)}
             </p>
           </div>
           <button
@@ -388,6 +399,28 @@ export default function InventoryPage() {
           >
             재고 조정
           </button>
+        </div>
+
+        <div className="flex items-center gap-3 flex-wrap">
+          <label htmlFor="warehouse-filter" className="text-sm font-medium text-gray-700">
+            창고 선택
+          </label>
+          <select
+            id="warehouse-filter"
+            value={warehouseFilter}
+            onChange={(e) => setWarehouseFilter(
+              e.target.value === "전체" ? "전체" : Number(e.target.value)
+            )}
+            className="px-3 py-2 text-sm bg-white"
+            style={{ border: "1px solid #E5EAF0", borderRadius: 7 }}
+          >
+            <option value="전체">전체 창고</option>
+            {warehouses.map((warehouse) => (
+              <option key={warehouse.warehouse_id} value={warehouse.warehouse_id}>
+                {warehouse.name}
+              </option>
+            ))}
+          </select>
         </div>
 
         {/* 6.9 창고 재고 요약 */}
