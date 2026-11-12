@@ -123,6 +123,9 @@ export const itemsApi = {
   /** 6.4 상품 수정 — 변경할 필드만 전송. is_active:false 로 단종 처리 */
   update: (itemId: number, body: UpdateItemRequest) =>
     request<Item>(`/items/${itemId}`, { method: "PATCH", body }),
+  /** 상품 단종 처리 — 실제 백엔드 DELETE API */
+  deactivate: (itemId: number) =>
+    requestEmpty(`/items/${itemId}`, { method: "DELETE" }),
 }
 
 export const categoriesApi = {
@@ -151,6 +154,15 @@ export const inventoriesApi = {
     requestPage<Inventory>("/inventories", { query: q(params) }),
   /** 7.2 재고 상세(로트 포함) 조회 — 로트는 FEFO 순, 수량 0은 제외 */
   get: (inventoryId: number) => request<InventoryDetail>(`/inventories/${inventoryId}`),
+  /** 실제 백엔드: 재고별 LOT 목록 조회 */
+  lots: (inventoryId: number) =>
+    request<Array<{
+      lot_id: number
+      inventory_id: number
+      lot_number: string
+      expiry_date: string
+      quantity: number
+    }>>(`/inventories/${inventoryId}/lots`),
   /** 7.3 유통기한 임박/만료 로트 조회 */
   expiring: (params?: ExpiringLotParams) =>
     requestPage<ExpiringLot>("/inventories/expiring", { query: q(params) }),
