@@ -4,6 +4,8 @@ build/
 .cache/
 .env*
 !.env.example
+# 운영 빌드용 API 주소(비밀값 아님)는 공유한다
+!.env.production
 .vite/
 vite.config.*.timestamp-*
 *.tsbuildinfo

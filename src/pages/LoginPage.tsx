@@ -7,22 +7,6 @@ interface Props {
   onBack: () => void
 }
 
-/**
- * 백엔드가 아직 없을 때 화면을 확인하기 위한 대체 계정.
- *
- * VITE_API_BASE_URL 이 설정되어 있으면 3.1 로그인 API만 사용하고 이 목록은
- * 쳐다보지 않는다. 서버가 붙으면 .env 에 주소만 넣으면 되고, 이 상수와
- * 아래 분기는 그때 지우면 된다.
- */
-const OFFLINE_ACCOUNTS: Record<string, { password: string; user: AuthUser }> = {
-  admin01: { password: "admin123", user: { user_id: 1, username: "admin01", name: "김관리자", role: "ADMIN" } },
-  sales01: { password: "sales123", user: { user_id: 2, username: "sales01", name: "이영업", role: "SALES" } },
-  wh01: { password: "wh123", user: { user_id: 3, username: "wh01", name: "박창고", role: "WAREHOUSE" } },
-}
-
-/** 서버 주소가 주입되어 있으면 실제 API로만 인증한다 */
-const HAS_BACKEND = Boolean(import.meta.env.VITE_API_BASE_URL)
-
 export default function LoginPage({ onLogin, onBack }: Props) {
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
@@ -33,14 +17,6 @@ export default function LoginPage({ onLogin, onBack }: Props) {
     e.preventDefault()
     setError("")
     setLoading(true)
-
-    if (!HAS_BACKEND) {
-      const found = OFFLINE_ACCOUNTS[username]
-      if (found && found.password === password) onLogin(found.user)
-      else setError("아이디 또는 비밀번호가 일치하지 않습니다.")
-      setLoading(false)
-      return
-    }
 
     try {
       // 3.1 로그인 — 성공하면 client.ts가 access/refresh 토큰을 보관한다
