@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react"
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
 import type { AdminRoute, AuthUser } from "../App"
-import { dashboardApi, errorMessage, fetchAllPages, purchasesApi } from "../api"
-// 상품 목록 API(6.1)가 생기기 전까지 재고 부족 품목의 단위는 샘플 상품에서 찾는다
-import { ITEMS } from "../data/sample"
+import { dashboardApi, errorMessage, fetchAllPages, itemsApi, purchasesApi } from "../api"
+// 백엔드 주소가 없을 때만 쓰는 대체 단위 (다른 화면들과 같은 규칙)
+import { ITEMS as SAMPLE_ITEMS } from "../data/sample"
 import {
   DELIVERY_STATUS_LABELS,
   DELIVERY_STATUS_TONES,
@@ -67,6 +67,12 @@ function compact(n: number) {
 export default function DashboardPage({ user, onNavigate }: Props) {
   const [summary, setSummary] = useState<DashboardSummary>(EMPTY_SUMMARY)
   const [lowStock, setLowStock] = useState<LowStockItem[]>([])
+  /** 상품 ID → 단위. 12.2 재고 부족 응답에는 단위가 없어 상품 마스터에서 채운다 */
+  const [itemUnits, setItemUnits] = useState<Map<number, string>>(
+    import.meta.env.VITE_API_BASE_URL
+      ? new Map()
+      : new Map(SAMPLE_ITEMS.map((i) => [i.item_id, i.unit])),
+  )
   const [orders, setOrders] = useState<RecentOrder[]>([])
   const [trend, setTrend] = useState<{ month: string; sales: number; purchase: number; margin: number }[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -81,6 +87,12 @@ export default function DashboardPage({ user, onNavigate }: Props) {
   useEffect(() => {
     Promise.all([
       fetchAllPages((page, page_size) => dashboardApi.lowStockItems({ page, page_size })).then(setLowStock),
+      // 6.1 상품 목록 — 12.2 응답에는 단위가 없어 상품 마스터에서 찾는다
+      !import.meta.env.VITE_API_BASE_URL
+        ? Promise.resolve()
+        : fetchAllPages((page, page_size) => itemsApi.list({ page, page_size })).then((rows) =>
+            setItemUnits(new Map(rows.map((i) => [i.item_id, i.unit]))),
+          ),
       dashboardApi.recentOrders(5).then(setOrders),
       // 마지막 달(이번 달 1일 ~ 오늘)은 기간 미지정 요약과 같은 기간이라 요약 카드에도 그대로 쓴다
       Promise.all(
@@ -254,7 +266,7 @@ export default function DashboardPage({ user, onNavigate }: Props) {
             <div className="max-h-56 space-y-4 overflow-y-auto pr-2">
               {lowStock.map((row) => {
                 const pct = row.safety_stock === 0 ? 0 : Math.round((row.quantity / row.safety_stock) * 100)
-                const unit = ITEMS.find((i) => i.item_id === row.item_id)?.unit ?? ""
+                const unit = itemUnits.get(row.item_id) ?? ""
                 return (
                     <div key={row.inventory_id}>
                       <div className="flex justify-between items-center mb-1.5">

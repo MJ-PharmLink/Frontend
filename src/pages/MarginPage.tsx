@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react"
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
-import { errorMessage, salesApi } from "../api"
-// 상품 목록 API(6.1)가 생기기 전까지 안내 문구의 등록 상품 수는 샘플 상품 수를 쓴다
-import { ITEMS } from "../data/sample"
+import { errorMessage, itemsApi, salesApi } from "../api"
+// 백엔드 주소가 없을 때만 쓰는 대체 상품 수 (다른 화면들과 같은 규칙)
+import { ITEMS as SAMPLE_ITEMS } from "../data/sample"
 import { firstDayOfMonthKst, formatDate, formatMoney, formatRate, todayKst } from "../lib/domain"
 import { MARGIN_GROUP_BY } from "../types/api"
 import type { MarginAmounts, MarginGroupBy, MarginItemGroup, MarginPartnerGroup } from "../types/api"
@@ -30,6 +30,18 @@ export default function MarginPage() {
   const [fetchedGroups, setGroups] = useState<(MarginPartnerGroup | MarginItemGroup)[]>([])
   const [fetchedSaleCount, setSaleCount] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  const [itemCount, setItemCount] = useState(
+    import.meta.env.VITE_API_BASE_URL ? 0 : SAMPLE_ITEMS.length,
+  )
+
+  // 6.1 상품 목록 — 안내 문구의 등록 상품 수. 개수만 필요하므로 첫 페이지만 받는다
+  useEffect(() => {
+    if (!import.meta.env.VITE_API_BASE_URL) return
+    itemsApi
+      .list({ page: 1, page_size: 1 })
+      .then((res) => setItemCount(res.pagination.total_count))
+      .catch(() => setItemCount(0))
+  }, [])
 
   /**
    * 11.3 마진 집계 (summary + group_by별 groups, 서버가 마진 큰 순으로 정렬) 와
@@ -243,7 +255,7 @@ export default function MarginPage() {
         </div>
 
         <p className="text-xs" style={{ color: "#aaa" }}>
-          상품별 집계는 매출에 연결된 주문 라인의 스냅샷 단가로 계산합니다. 등록된 상품 {ITEMS.length}개 중 해당 기간에 판매된 품목만 표시됩니다.
+          상품별 집계는 매출에 연결된 주문 라인의 스냅샷 단가로 계산합니다. 등록된 상품 {itemCount}개 중 해당 기간에 판매된 품목만 표시됩니다.
         </p>
       </div>
   )

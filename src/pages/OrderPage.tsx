@@ -1,8 +1,16 @@
 import { useCallback, useEffect, useState } from "react"
 import type { AuthUser } from "../App"
-import { ApiError, deliveriesApi, errorMessage, fetchAllPages, ordersApi, partnersApi } from "../api"
-// 상품 목록 API(6.1)가 생기기 전까지 상품 선택은 샘플 상품을 쓴다 (로컬 DB에 같은 item_id 필요)
-import { ITEMS } from "../data/sample"
+import {
+  ApiError,
+  deliveriesApi,
+  errorMessage,
+  fetchAllPages,
+  itemsApi,
+  ordersApi,
+  partnersApi,
+} from "../api"
+// 백엔드 주소가 없을 때만 쓰는 대체 상품 목록 (다른 화면들과 같은 규칙)
+import { ITEMS as SAMPLE_ITEMS } from "../data/sample"
 import {
   DELIVERY_STATUS_LABELS,
   DELIVERY_STATUS_TONES,
@@ -19,6 +27,7 @@ import type {
   DeliveryStatus,
   InsufficientStockDetail,
   OrderDetail,
+  Item,
   OrderStatus,
   OrderSummary,
 } from "../types/api"
@@ -66,7 +75,14 @@ export default function OrderPage({ user }: Props) {
   const [cancelReason, setCancelReason] = useState("")
 
   const [draftPartner, setDraftPartner] = useState<number>(0)
-  const [draftLines, setDraftLines] = useState<DraftLine[]>([{ item_id: ITEMS[0].item_id, quantity: 1 }])
+  const [items, setItems] = useState<Item[]>(
+    import.meta.env.VITE_API_BASE_URL ? [] : SAMPLE_ITEMS,
+  )
+  const [draftLines, setDraftLines] = useState<DraftLine[]>(() => {
+    if (import.meta.env.VITE_API_BASE_URL) return []
+    const first = SAMPLE_ITEMS.find((i) => i.is_active)
+    return first ? [{ item_id: first.item_id, quantity: 1 }] : []
+  })
 
   // 8장 전체가 관리자·영업 권한이다
   const canManage = user.role === "ADMIN" || user.role === "SALES"
@@ -92,8 +108,22 @@ export default function OrderPage({ user }: Props) {
         setCustomers(rows)
         setDraftPartner(rows.find((p) => p.is_active)?.partner_id ?? 0)
       }),
+      // 6.1 상품 목록 — 주문 등록의 상품 선택지
+      !import.meta.env.VITE_API_BASE_URL
+        ? Promise.resolve()
+        : fetchAllPages((page, page_size) => itemsApi.list({ page, page_size })).then((rows) => {
+        setItems(rows)
+        const first = rows.find((i) => i.is_active)
+        if (first) setDraftLines([{ item_id: first.item_id, quantity: 1 }])
+      }),
     ]).catch((err) => setError(errorMessage(err, "주문 목록을 불러오지 못했습니다.")))
   }, [reloadOrders])
+
+  /** 등록 폼의 기본 품목 한 줄. 상품이 하나도 없으면 빈 배열이다 */
+  const firstLine = (): DraftLine[] => {
+    const first = items.find((i) => i.is_active)
+    return first ? [{ item_id: first.item_id, quantity: 1 }] : []
+  }
 
   const filtered = orders.filter((o) => {
     const matchStatus = statusFilter === "전체" || o.status === statusFilter
@@ -160,7 +190,7 @@ export default function OrderPage({ user }: Props) {
       return
     }
     setShowCreate(false)
-    setDraftLines([{ item_id: ITEMS[0].item_id, quantity: 1 }])
+    setDraftLines(firstLine())
   }
 
   const deliveryOf = (order: OrderSummary | OrderDetail) => {
@@ -169,7 +199,7 @@ export default function OrderPage({ user }: Props) {
   }
 
   const draftTotal = draftLines.reduce((sum, l) => {
-    const item = ITEMS.find((i) => i.item_id === l.item_id)
+    const item = items.find((i) => i.item_id === l.item_id)
     return sum + (item ? item.unit_price * l.quantity : 0)
   }, 0)
 
@@ -455,7 +485,7 @@ export default function OrderPage({ user }: Props) {
                 <label className="block text-xs font-medium mb-1.5" style={{ color: "#666" }}>주문 품목</label>
                 <div className="space-y-2">
                   {draftLines.map((line, idx) => {
-                    const item = ITEMS.find((i) => i.item_id === line.item_id)
+                    const item = items.find((i) => i.item_id === line.item_id)
                     return (
                         <div key={idx} className="flex gap-2 items-center">
                           <select
@@ -466,7 +496,7 @@ export default function OrderPage({ user }: Props) {
                               className="flex-1 px-3 py-2 text-sm outline-none cursor-pointer"
                               style={{ border: "1px solid #E5EAF0", borderRadius: 6, background: "white", color: "#333" }}
                           >
-                            {ITEMS.filter((i) => i.is_active).map((i) => (
+                            {items.filter((i) => i.is_active).map((i) => (
                                 <option key={i.item_id} value={i.item_id}>{i.item_code} · {i.item_name}</option>
                             ))}
                           </select>
@@ -499,7 +529,7 @@ export default function OrderPage({ user }: Props) {
                 </div>
 
                 <button
-                    onClick={() => setDraftLines((prev) => [...prev, { item_id: ITEMS[0].item_id, quantity: 1 }])}
+                    onClick={() => setDraftLines((prev) => [...prev, ...firstLine()])}
                     className="mt-3 px-3 py-1.5 text-xs font-medium"
                     style={{ border: "1px dashed #CBD5E1", borderRadius: 6, color: "#0B3D91" }}
                 >

@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from "react"
-import { errorMessage, fetchAllPages, partnersApi, purchasesApi } from "../api"
+import { errorMessage, fetchAllPages, itemsApi, partnersApi, purchasesApi, warehousesApi } from "../api"
+// 백엔드 주소가 없을 때만 쓰는 대체 목록 (다른 화면들과 같은 규칙)
+import { ITEMS as SAMPLE_ITEMS, WAREHOUSES as SAMPLE_WAREHOUSES } from "../data/sample"
 import { DETAIL_FETCH_CONCURRENCY, mapWithConcurrency } from "../lib/concurrency"
-// 상품(6.1)·창고(6.8) 목록 API가 생기기 전까지 선택 목록은 샘플을 쓴다 (로컬 DB에 같은 item_id·warehouse_id 필요)
-import { DEFAULT_WAREHOUSE, ITEMS, TODAY, WAREHOUSES } from "../data/sample"
-import { formatDate, formatDateTime, formatMoney, formatNumber } from "../lib/domain"
-import type { BusinessPartner, PurchaseDetail } from "../types/api"
+import { formatDate, formatDateTime, formatMoney, formatNumber, todayKst } from "../lib/domain"
+import type { BusinessPartner, Item, PurchaseDetail, Warehouse } from "../types/api"
 
 /**
  * 10. 매입 — 관리자·창고 전용.
@@ -21,8 +21,9 @@ interface DraftLine {
   expiry_date: string
 }
 
-const emptyLine = (): DraftLine => ({
-  item_id: ITEMS[0].item_id,
+/** 상품 목록을 받기 전에는 item_id 가 0이고, 받은 뒤에는 첫 판매 상품이 기본값이 된다 */
+const emptyLine = (itemId = 0): DraftLine => ({
+  item_id: itemId,
   quantity: 1,
   lot_number: "",
   // 유통기한은 매입일 이후여야 한다(10.2)
@@ -41,9 +42,21 @@ export default function PurchasePage() {
   const [error, setError] = useState<string | null>(null)
 
   const [draftPartner, setDraftPartner] = useState<number>(0)
-  const [draftWarehouse, setDraftWarehouse] = useState<number>(DEFAULT_WAREHOUSE.warehouse_id)
-  const [draftDate, setDraftDate] = useState(TODAY)
+  const [items, setItems] = useState<Item[]>(
+    import.meta.env.VITE_API_BASE_URL ? [] : SAMPLE_ITEMS,
+  )
+  const [warehouses, setWarehouses] = useState<Warehouse[]>(
+    import.meta.env.VITE_API_BASE_URL ? [] : SAMPLE_WAREHOUSES,
+  )
+  const [draftWarehouse, setDraftWarehouse] = useState<number>(
+    import.meta.env.VITE_API_BASE_URL
+      ? 0
+      : (SAMPLE_WAREHOUSES.find((w) => w.is_default) ?? SAMPLE_WAREHOUSES[0])?.warehouse_id ?? 0,
+  )
+  const [draftDate, setDraftDate] = useState(todayKst())
   const [draftLines, setDraftLines] = useState<DraftLine[]>([emptyLine()])
+  /** 새 품목 줄 — 판매 중인 첫 상품을 기본값으로 둔다 */
+  const newLine = () => emptyLine(items.find((i) => i.is_active)?.item_id ?? 0)
 
   /**
    * 10.1 매입 목록 → 10.3 상세. 요약 카드의 입고 수량 합계에 라인 수량이 필요해서
@@ -62,6 +75,28 @@ export default function PurchasePage() {
       ).then((rows) => {
         setSuppliers(rows)
         setDraftPartner(rows.find((p) => p.is_active)?.partner_id ?? 0)
+      }),
+      // 6.1 상품 목록 — 입고 품목 선택지
+      !import.meta.env.VITE_API_BASE_URL
+        ? Promise.resolve()
+        : fetchAllPages((page, page_size) => itemsApi.list({ page, page_size })).then((rows) => {
+        setItems(rows)
+        const first = rows.find((i) => i.is_active)
+        // 아직 아무것도 고르지 않은 빈 줄에만 기본 상품을 채운다
+        if (first) {
+          setDraftLines((prev) =>
+            prev.map((line) => (line.item_id === 0 ? { ...line, item_id: first.item_id } : line)),
+          )
+        }
+      }),
+      // 6.8 창고 목록 — 기본 창고를 미리 골라 둔다 (10.2에서 생략하면 서버가 기본 창고를 쓴다)
+      !import.meta.env.VITE_API_BASE_URL
+        ? Promise.resolve()
+        : warehousesApi.list().then((rows) => {
+        setWarehouses(rows)
+        setDraftWarehouse(
+          (rows.find((w) => w.is_default) ?? rows[0])?.warehouse_id ?? 0,
+        )
       }),
     ]).catch((err) => setPageError(errorMessage(err, "매입 목록을 불러오지 못했습니다.")))
   }, [reloadPurchases])
@@ -82,7 +117,7 @@ export default function PurchasePage() {
   }
 
   const draftTotal = draftLines.reduce((sum, l) => {
-    const item = ITEMS.find((i) => i.item_id === l.item_id)
+    const item = items.find((i) => i.item_id === l.item_id)
     return sum + (item ? item.unit_cost * l.quantity : 0)
   }, 0)
 
@@ -120,7 +155,7 @@ export default function PurchasePage() {
       return setError(errorMessage(err, "매입을 등록하지 못했습니다."))
     }
     setShowCreate(false)
-    setDraftLines([emptyLine()])
+    setDraftLines([newLine()])
     setError(null)
   }
 
@@ -222,7 +257,7 @@ export default function PurchasePage() {
                     <td className="px-5 py-4 text-xs font-mono" style={{ color: "#666" }}>#{p.purchase_id}</td>
                     <td className="px-5 py-4 font-medium" style={{ color: "#1a1a1a" }}>{p.partner_name}</td>
                     <td className="px-5 py-4 text-xs" style={{ color: "#777" }}>
-                      {WAREHOUSES.find((w) => w.warehouse_id === p.warehouse_id)?.name ?? "-"}
+                      {warehouses.find((w) => w.warehouse_id === p.warehouse_id)?.name ?? "-"}
                     </td>
                     <td className="px-5 py-4 text-sm" style={{ color: "#555", fontFamily: "'Inter', sans-serif" }}>{formatDate(p.purchase_date)}</td>
                     <td className="px-5 py-4 text-sm" style={{ color: "#555" }}>{p.items.length}개</td>
@@ -252,7 +287,7 @@ export default function PurchasePage() {
                 </button>
                 <h3 className="font-semibold text-lg" style={{ color: "#1a1a1a" }}>매입 #{detail.purchase_id}</h3>
                 <p className="text-sm mt-1 mb-6" style={{ color: "#888" }}>
-                  {detail.partner_name} · {formatDate(detail.purchase_date)} · {WAREHOUSES.find((w) => w.warehouse_id === detail.warehouse_id)?.name}
+                  {detail.partner_name} · {formatDate(detail.purchase_date)} · {warehouses.find((w) => w.warehouse_id === detail.warehouse_id)?.name ?? "-"}
                 </p>
 
                 <table className="w-full text-sm mb-5">
@@ -335,7 +370,7 @@ export default function PurchasePage() {
                         className="w-full px-3 py-2 text-sm outline-none cursor-pointer"
                         style={{ ...inputStyle, background: "white" }}
                     >
-                      {WAREHOUSES.map((w) => (
+                      {warehouses.map((w) => (
                           <option key={w.warehouse_id} value={w.warehouse_id}>{w.name}{w.is_default ? " (기본)" : ""}</option>
                       ))}
                     </select>
@@ -349,7 +384,7 @@ export default function PurchasePage() {
                 <label className="block text-xs font-medium mb-1.5" style={{ color: "#666" }}>입고 품목</label>
                 <div className="space-y-2">
                   {draftLines.map((line, idx) => {
-                    const item = ITEMS.find((i) => i.item_id === line.item_id)
+                    const item = items.find((i) => i.item_id === line.item_id)
                     return (
                         <div key={idx} className="flex gap-2 items-center">
                           <select
@@ -358,7 +393,7 @@ export default function PurchasePage() {
                               className="flex-1 min-w-0 px-3 py-2 text-sm outline-none cursor-pointer"
                               style={{ ...inputStyle, background: "white" }}
                           >
-                            {ITEMS.filter((i) => i.is_active).map((i) => (
+                            {items.filter((i) => i.is_active).map((i) => (
                                 <option key={i.item_id} value={i.item_id}>{i.item_code} · {i.item_name}</option>
                             ))}
                           </select>
@@ -401,7 +436,7 @@ export default function PurchasePage() {
                 </div>
 
                 <button
-                    onClick={() => setDraftLines((prev) => [...prev, emptyLine()])}
+                    onClick={() => setDraftLines((prev) => [...prev, newLine()])}
                     className="mt-3 px-3 py-1.5 text-xs font-medium"
                     style={{ border: "1px dashed #CBD5E1", borderRadius: 6, color: "#0B3D91" }}
                 >
