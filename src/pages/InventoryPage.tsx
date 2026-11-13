@@ -4,6 +4,7 @@ import {
   errorMessage,
   fetchAllPages,
   inventoriesApi,
+  partnersApi,
   warehousesApi,
   itemsApi,
 } from "../api"
@@ -12,6 +13,7 @@ import {
   EXPIRING_SOON_DAYS,
   INVENTORY_DETAILS,
   ITEMS,
+  SUPPLIERS,
   WAREHOUSES,
 } from "../data/sample"
 import {
@@ -66,6 +68,13 @@ function expiryStatusOf(dateStr: string): ExpiryStatus {
   return "NORMAL"
 }
 
+/** 상품 마스터에서 가져오는 보조 정보 — 재고 응답에는 없는 값들 */
+interface ItemMeta {
+  category_id: number
+  supplier_id: number
+  supplier_name: string
+}
+
 type TabKey = "stock" | "expiry" | "history"
 
 const TABS: { key: TabKey; label: string }[] = [
@@ -93,18 +102,37 @@ export default function InventoryPage() {
   const [categories, setCategories] = useState<Category[]>(
     import.meta.env.VITE_API_BASE_URL ? [] : CATEGORIES
   )
-  const [itemCategory, setItemCategory] = useState<Map<number, number>>(
-    () => new Map(ITEMS.map((item) => [item.item_id, item.category_id]))
+  const [itemMeta, setItemMeta] = useState<Map<number, ItemMeta>>(() =>
+    new Map(
+      ITEMS.map((item) => [
+        item.item_id,
+        {
+          category_id: item.category_id,
+          supplier_id: item.supplier_id,
+          supplier_name:
+            SUPPLIERS.find((s) => s.partner_id === item.supplier_id)?.name ?? "-",
+        },
+      ])
+    )
   )
   const [historyRows, setHistoryRows] = useState<InventoryTransaction[]>([])
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
   const [warehouseFilter, setWarehouseFilter] = useState<number | "전체">("전체")
   const [inventoryLoading, setInventoryLoading] = useState(false)
   const [inventoryError, setInventoryError] = useState<string | null>(null)
-  const ITEM_CATEGORY = itemCategory
+  /** 상품 ID → 카테고리 (기존 필터가 쓰던 이름을 그대로 둔다) */
+  const ITEM_CATEGORY = {
+    get: (itemId: number) => itemMeta.get(itemId)?.category_id,
+  }
+  const supplierNameOf = (itemId: number) => itemMeta.get(itemId)?.supplier_name ?? "-"
+  /** 필터 목록에 쓸 제조회사 — 재고에 실제로 들어 있는 것만 모은다 */
+  const supplierNames = Array.from(
+    new Set(inventories.map((inv) => supplierNameOf(inv.item_id)).filter((n) => n !== "-"))
+  ).sort((a, b) => a.localeCompare(b, "ko"))
   const [tab, setTab] = useState<TabKey>("stock")
   const [keyword, setKeyword] = useState("")
   const [categoryFilter, setCategoryFilter] = useState<number | "전체">("전체")
+  const [supplierFilter, setSupplierFilter] = useState<string>("전체")
   const [stockFilter, setStockFilter] = useState<StockStatus | "전체">("전체")
   const [expiryFilter, setExpiryFilter] = useState<ExpiryStatus | "전체">("전체")
   const [detail, setDetail] = useState<InventoryDetail | null>(null)
@@ -122,7 +150,7 @@ export default function InventoryPage() {
       setInventoryError(null)
 
       try {
-        const [inventoryRows, itemRows, categoryRows, transactionRows, warehouseRows] =
+        const [inventoryRows, itemRows, categoryRows, transactionRows, warehouseRows, supplierRows] =
           await Promise.all([
             fetchAllPages((page, pageSize) =>
               inventoriesApi.list({ page, page_size: pageSize })
@@ -135,7 +163,12 @@ export default function InventoryPage() {
               inventoriesApi.transactions({ page, page_size: pageSize })
             ),
             warehousesApi.list(),
+            fetchAllPages((page, pageSize) =>
+              partnersApi.list({ partner_type: "SUPPLIER", include_inactive: true, page, page_size: pageSize })
+            ),
           ])
+
+        const supplierMap = new Map(supplierRows.map((s) => [s.partner_id, s.name]))
 
         const itemMap = new Map<number, Item>(
           itemRows.map((item) => [item.item_id, item])
@@ -188,6 +221,8 @@ export default function InventoryPage() {
 
             return {
               ...inventory,
+              item_code: item?.item_code ?? inventory.item_code,
+              item_name: item?.item_name ?? inventory.item_name,
               item_status: itemStatus,
               available_quantity: available,
               stock_status: status,
@@ -212,8 +247,17 @@ export default function InventoryPage() {
         setInventories(completeInventories)
         setCategories(categoryRows)
         setWarehouses(warehouseRows)
-        setItemCategory(
-          new Map(itemRows.map((item) => [item.item_id, item.category_id]))
+        setItemMeta(
+          new Map(
+            itemRows.map((item) => [
+              item.item_id,
+              {
+                category_id: item.category_id,
+                supplier_id: item.supplier_id,
+                supplier_name: supplierMap.get(item.supplier_id) ?? "-",
+              },
+            ])
+          )
         )
         setHistoryRows(completeHistory)
       } catch (error) {
@@ -263,9 +307,10 @@ export default function InventoryPage() {
     const matchKeyword =
       keyword === "" || inv.item_name.includes(keyword) || inv.item_code.includes(keyword)
     const matchCategory = categoryFilter === "전체" || ITEM_CATEGORY.get(inv.item_id) === categoryFilter
+    const matchSupplier = supplierFilter === "전체" || supplierNameOf(inv.item_id) === supplierFilter
     const matchStock = stockFilter === "전체" || inv.stock_status === stockFilter
     const matchExpiry = expiryFilter === "전체" || inv.expiry_status === expiryFilter
-    return matchKeyword && matchCategory && matchStock && matchExpiry
+    return matchKeyword && matchCategory && matchSupplier && matchStock && matchExpiry
   })
 
   const lowStock = visibleInventories.filter(
@@ -505,9 +550,24 @@ export default function InventoryPage() {
                 })}
 
                 <select
+                    value={supplierFilter}
+                    onChange={(e) => setSupplierFilter(e.target.value)}
+                    aria-label="제조회사"
+                    className="ml-auto px-3 py-1.5 text-xs outline-none cursor-pointer"
+                    style={{ border: "1px solid #E5EAF0", borderRadius: 7, background: "white" }}
+                >
+                  <option value="전체">제조회사 전체 ({supplierNames.length})</option>
+                  {supplierNames.map((name) => {
+                    const count = inventories.filter((i) => supplierNameOf(i.item_id) === name).length
+                    return (
+                        <option key={name} value={name}>{name} ({count})</option>
+                    )
+                  })}
+                </select>
+                <select
                     value={stockFilter}
                     onChange={(e) => setStockFilter(e.target.value as StockStatus | "전체")}
-                    className="ml-auto px-3 py-1.5 text-xs outline-none cursor-pointer"
+                    className="px-3 py-1.5 text-xs outline-none cursor-pointer"
                     style={{ border: "1px solid #E5EAF0", borderRadius: 7, background: "white" }}
                 >
                   <option value="전체">재고 상태 전체</option>
@@ -533,7 +593,7 @@ export default function InventoryPage() {
                   <table className="w-full text-sm">
                     <thead>
                     <tr style={{ background: "#F7F9FC", borderBottom: "1px solid #E5EAF0" }}>
-                      {["상품코드", "상품명", "카테고리", "전체 수량", "가용 수량", "안전재고", "재고 상태", "로트", "최단 유통기한", "유통기한", ""].map((h) => (
+                      {["상품코드", "상품명", "제조회사", "카테고리", "전체 수량", "가용 수량", "안전재고", "재고 상태", "로트", "최단 유통기한", "유통기한", ""].map((h) => (
                           <th key={h} className="px-4 py-3 text-left font-medium" style={{ color: "#888", fontSize: 12, whiteSpace: "nowrap" }}>{h}</th>
                       ))}
                     </tr>
@@ -554,6 +614,7 @@ export default function InventoryPage() {
                           >
                             <td className="px-4 py-3 font-mono text-xs" style={{ color: "#666" }}>{inv.item_code}</td>
                             <td className="px-4 py-3 font-medium" style={{ color: "#1a1a1a" }}>{inv.item_name}</td>
+                            <td className="px-4 py-3 text-sm" style={{ color: "#666" }}>{supplierNameOf(inv.item_id)}</td>
                             <td className="px-4 py-3">
                               <span className="text-xs px-2 py-0.5 rounded-md" style={{ background: catStyle.bg, color: catStyle.color }}>
                                 {catName}
@@ -600,7 +661,7 @@ export default function InventoryPage() {
                 <table className="w-full text-sm">
                   <thead>
                   <tr style={{ background: "#F7F9FC", borderBottom: "1px solid #E5EAF0" }}>
-                    {["상품코드", "상품명", "로트번호", "유통기한", "남은 일수", "수량", "상태"].map((h) => (
+                    {["상품코드", "상품명", "제조회사", "로트번호", "유통기한", "남은 일수", "수량", "상태"].map((h) => (
                         <th key={h} className="px-4 py-3 text-left font-medium" style={{ color: "#888", fontSize: 12, whiteSpace: "nowrap" }}>{h}</th>
                     ))}
                   </tr>
@@ -612,6 +673,7 @@ export default function InventoryPage() {
                         <tr key={lot.lot_id} style={{ borderTop: i > 0 ? "1px solid #F3F4F6" : "none" }}>
                           <td className="px-4 py-3 font-mono text-xs" style={{ color: "#666" }}>{lot.item_code}</td>
                           <td className="px-4 py-3 font-medium" style={{ color: "#1a1a1a" }}>{lot.item_name}</td>
+                          <td className="px-4 py-3 text-sm" style={{ color: "#666" }}>{supplierNameOf(lot.item_id)}</td>
                           <td className="px-4 py-3 font-mono text-xs" style={{ color: "#555" }}>{lot.lot_number}</td>
                           <td className="px-4 py-3 text-sm" style={{ color: "#555", fontFamily: "'Inter', sans-serif" }}>{formatDate(lot.expiry_date)}</td>
                           <td className="px-4 py-3 text-sm font-medium" style={{ color: lot.days_until_expiry < 0 ? "#B91C1C" : "#B45309", fontFamily: "'Inter', sans-serif" }}>

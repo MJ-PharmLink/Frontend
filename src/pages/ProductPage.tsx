@@ -132,7 +132,7 @@ interface Props {
   user: AuthUser
 }
 
-type TabKey = "items" | "categories"
+type TabKey = "items" | "suppliers" | "categories"
 
 const EMPTY_CATEGORY_FORM = { category_name: "", description: "" }
 
@@ -140,6 +140,10 @@ export function ProductPage({ user }: Props) {
   const [tab, setTab] = useState<TabKey>("items")
   const [suppliers, setSuppliers] = useState<BusinessPartner[]>(
     import.meta.env.VITE_API_BASE_URL ? [] : ACTIVE_SUPPLIERS
+  )
+  // 제약회사 탭에서는 단종된 공급처도 보여 준다
+  const [allSuppliers, setAllSuppliers] = useState<BusinessPartner[]>(
+    import.meta.env.VITE_API_BASE_URL ? [] : SUPPLIERS
   )
   const [categories, setCategories] = useState<Category[]>(
     import.meta.env.VITE_API_BASE_URL ? [] : CATEGORIES
@@ -208,6 +212,7 @@ export function ProductPage({ user }: Props) {
 
         if (!cancelled) {
           setCategories(categoryRows)
+          setAllSuppliers(supplierRows)
           const activeSuppliers = supplierRows.filter(
             (supplier) => supplier.is_active
           )
@@ -508,7 +513,7 @@ export function ProductPage({ user }: Props) {
               등록된 의약품 및 상품 마스터를 조회하고 관리합니다.
             </p>
           </div>
-          {tab === "items" ? (
+          {tab === "items" && (
               <button
                   onClick={openCreate}
                   className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors"
@@ -516,22 +521,21 @@ export function ProductPage({ user }: Props) {
               >
                 + 새 상품 등록
               </button>
-          ) : (
-              canManageCategory && (
-                  <button
-                      onClick={openCategoryCreate}
-                      className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors"
-                      style={{ background: "#0B3D91" }}
-                  >
-                    + 카테고리 생성
-                  </button>
-              )
+          )}
+          {tab === "categories" && canManageCategory && (
+              <button
+                  onClick={openCategoryCreate}
+                  className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors"
+                  style={{ background: "#0B3D91" }}
+              >
+                + 카테고리 생성
+              </button>
           )}
         </div>
 
         {/* Tabs */}
         <div className="flex gap-1 p-1 rounded-lg w-fit" style={{ background: "#F0F2F5" }}>
-          {([["items", "상품 목록"], ["categories", "카테고리"]] as const).map(([key, label]) => (
+          {([["items", "상품목록"], ["suppliers", "제약회사"], ["categories", "카테고리"]] as const).map(([key, label]) => (
               <button
                   key={key}
                   onClick={() => setTab(key)}
@@ -591,6 +595,7 @@ export function ProductPage({ user }: Props) {
               <tr>
                 <th className="px-4 py-3.5 font-semibold">상품코드</th>
                 <th className="px-4 py-3.5 font-semibold">상품명</th>
+                <th className="px-4 py-3.5 font-semibold">제조회사</th>
                 <th className="px-4 py-3.5 font-semibold">카테고리</th>
                 <th className="px-4 py-3.5 font-semibold">규격 / 단위</th>
                 <th className="px-4 py-3.5 font-semibold text-right">매입가</th>
@@ -610,8 +615,8 @@ export function ProductPage({ user }: Props) {
                       </td>
                       <td className="px-4 py-3">
                         <p className="font-medium text-gray-900">{p.item_name}</p>
-                        <p className="text-xs text-gray-400">{p.supplier_name}</p>
                       </td>
+                      <td className="px-4 py-3 text-sm text-gray-600">{p.supplier_name}</td>
                       <td className="px-4 py-3">
                         <span
                             className="inline-block px-2.5 py-1 text-xs font-medium rounded-md"
@@ -668,6 +673,57 @@ export function ProductPage({ user }: Props) {
         )}
 
         {/* 6.5~6.7 카테고리 */}
+        {tab === "suppliers" && (
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <div className="px-5 py-4 text-xs" style={{ color: "#888", borderBottom: "1px solid #E5EAF0" }}>
+                상품의 기본 공급처로 쓰는 제약회사입니다. 등록·수정은 거래처 관리에서 합니다.
+              </div>
+              <table className="w-full text-left text-sm text-gray-600">
+                <thead className="bg-gray-50 text-xs text-gray-500 border-b border-gray-200">
+                <tr>
+                  <th className="px-4 py-3.5 font-semibold">ID</th>
+                  <th className="px-4 py-3.5 font-semibold">제약회사명</th>
+                  <th className="px-4 py-3.5 font-semibold">사업자등록번호</th>
+                  <th className="px-4 py-3.5 font-semibold">담당자</th>
+                  <th className="px-4 py-3.5 font-semibold">연락처</th>
+                  <th className="px-4 py-3.5 font-semibold text-right">취급 상품</th>
+                  <th className="px-4 py-3.5 font-semibold text-center">상태</th>
+                </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200">
+                {allSuppliers.map((s) => {
+                  const count = items.filter((i) => i.supplier_id === s.partner_id).length
+                  return (
+                      <tr key={s.partner_id} className="hover:bg-gray-50 transition-colors" style={{ opacity: s.is_active ? 1 : 0.55 }}>
+                        <td className="px-4 py-3 text-xs text-gray-400">{s.partner_id}</td>
+                        <td className="px-4 py-3 font-medium text-gray-900">{s.name}</td>
+                        <td className="px-4 py-3 text-xs text-gray-500" style={{ fontFamily: "'Inter', sans-serif" }}>{s.business_number}</td>
+                        <td className="px-4 py-3 text-xs text-gray-500">{s.manager_name ?? "-"}</td>
+                        <td className="px-4 py-3 text-xs text-gray-500" style={{ fontFamily: "'Inter', sans-serif" }}>{s.phone}</td>
+                        <td className="px-4 py-3 text-right text-gray-700">{formatNumber(count)}</td>
+                        <td className="px-4 py-3 text-center">
+                          <span
+                              className="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full"
+                              style={s.is_active
+                                  ? { background: "#DCFCE7", color: "#166534" }
+                                  : { background: "#F3F4F6", color: "#6B7280" }}
+                          >
+                            {s.is_active ? "활성" : "비활성"}
+                          </span>
+                        </td>
+                      </tr>
+                  )
+                })}
+                </tbody>
+              </table>
+              {allSuppliers.length === 0 && (
+                  <div className="py-14 text-center text-sm text-gray-400">
+                    등록된 제약회사가 없습니다.
+                  </div>
+              )}
+            </div>
+        )}
+
         {tab === "categories" && (
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
               <div className="px-5 py-4 text-xs" style={{ color: "#888", borderBottom: "1px solid #E5EAF0" }}>
