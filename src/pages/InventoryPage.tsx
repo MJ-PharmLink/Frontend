@@ -34,12 +34,14 @@ import type {
   AdjustmentReason,
   AdjustmentType,
   Category,
+  ExpiringLot,
   ExpiryStatus,
   InventoryTransaction,
   Item,
   ItemStatus,
   InventoryDetail,
   Warehouse,
+  WarehouseSummary,
   StockStatus,
 } from "../types/api"
 
@@ -117,6 +119,10 @@ export default function InventoryPage() {
   )
   const [historyRows, setHistoryRows] = useState<InventoryTransaction[]>([])
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
+  /** 6.9 창고 상세의 재고 요약. 서버가 집계해 주므로 전체 재고를 세지 않는다 */
+  const [warehouseSummaries, setWarehouseSummaries] = useState<Map<number, WarehouseSummary>>(new Map())
+  /** 7.3 유통기한 임박·만료 로트. 서버가 걸러 주므로 전 로트를 훑지 않는다 */
+  const [expiringRows, setExpiringRows] = useState<ExpiringLot[] | null>(null)
   const [warehouseFilter, setWarehouseFilter] = useState<number | "전체">("전체")
   const [inventoryLoading, setInventoryLoading] = useState(false)
   const [inventoryError, setInventoryError] = useState<string | null>(null)
@@ -167,6 +173,15 @@ export default function InventoryPage() {
               partnersApi.list({ partner_type: "SUPPLIER", include_inactive: true, page, page_size: pageSize })
             ),
           ])
+
+        // 6.9 창고별 재고 요약 — 상단 카드는 서버 집계를 그대로 쓴다
+        const summaries = await Promise.all(
+          warehouseRows.map((w) => warehousesApi.get(w.warehouse_id)),
+        )
+        // 7.3 유통기한 임박·만료 로트
+        const expiring = await fetchAllPages((page, pageSize) =>
+          inventoriesApi.expiring({ page, page_size: pageSize }),
+        )
 
         const supplierMap = new Map(supplierRows.map((s) => [s.partner_id, s.name]))
 
@@ -247,6 +262,8 @@ export default function InventoryPage() {
         setInventories(completeInventories)
         setCategories(categoryRows)
         setWarehouses(warehouseRows)
+        setWarehouseSummaries(new Map(summaries.map((s) => [s.warehouse_id, s.summary])))
+        setExpiringRows(expiring)
         setItemMeta(
           new Map(
             itemRows.map((item) => [
@@ -284,7 +301,11 @@ export default function InventoryPage() {
 
   const expiringLots = useMemo(
     () =>
-      visibleInventories.flatMap((inv) =>
+      expiringRows
+        ? expiringRows.filter(
+            (lot) => warehouseFilter === "전체" || lot.warehouse_id === warehouseFilter,
+          )
+        : visibleInventories.flatMap((inv) =>
         inv.lots
           .filter(
             (lot) => lot.quantity > 0 && lot.expiry_status !== "NORMAL"
@@ -299,7 +320,7 @@ export default function InventoryPage() {
             days_until_expiry: daysUntil(lot.expiry_date),
           }))
       ),
-    [visibleInventories]
+    [visibleInventories, expiringRows, warehouseFilter]
   )
 
   // 7.1 필터 — keyword(상품명·코드), 카테고리, 재고 상태, 유통기한 상태
@@ -317,14 +338,38 @@ export default function InventoryPage() {
     (inv) => inv.item_status === "ACTIVE" && inv.safety_stock > 0 && inv.quantity <= inv.safety_stock,
   )
 
-  const summary = {
-    total_item_count: visibleInventories.length,
-    total_quantity: visibleInventories.reduce((sum, i) => sum + i.quantity, 0),
-    low_stock: visibleInventories.filter((i) => i.stock_status === "LOW_STOCK").length,
-    out_of_stock: visibleInventories.filter((i) => i.stock_status === "OUT_OF_STOCK").length,
-    expiring_soon: visibleInventories.filter((i) => i.expiry_status === "EXPIRING_SOON").length,
-    expired: visibleInventories.filter((i) => i.expiry_status === "EXPIRED").length,
-  }
+  /**
+   * 상단 요약. 서버가 6.9로 창고별 집계를 주면 그 값을 쓰고, 백엔드가 없을 때만
+   * 화면에서 직접 센다. 전체 창고를 보고 있으면 창고별 집계를 합친다.
+   */
+  const summary = (() => {
+    const picked = warehouseFilter === "전체"
+      ? [...warehouseSummaries.values()]
+      : [warehouseSummaries.get(warehouseFilter)].filter((s): s is WarehouseSummary => !!s)
+
+    if (picked.length > 0) {
+      return picked.reduce(
+        (acc, s) => ({
+          total_item_count: acc.total_item_count + s.total_item_count,
+          total_quantity: acc.total_quantity + s.total_quantity,
+          low_stock: acc.low_stock + s.by_stock_status.low_stock,
+          out_of_stock: acc.out_of_stock + s.by_stock_status.out_of_stock,
+          expiring_soon: acc.expiring_soon + s.by_expiry_status.expiring_soon,
+          expired: acc.expired + s.by_expiry_status.expired,
+        }),
+        { total_item_count: 0, total_quantity: 0, low_stock: 0, out_of_stock: 0, expiring_soon: 0, expired: 0 },
+      )
+    }
+
+    return {
+      total_item_count: visibleInventories.length,
+      total_quantity: visibleInventories.reduce((sum, i) => sum + i.quantity, 0),
+      low_stock: visibleInventories.filter((i) => i.stock_status === "LOW_STOCK").length,
+      out_of_stock: visibleInventories.filter((i) => i.stock_status === "OUT_OF_STOCK").length,
+      expiring_soon: visibleInventories.filter((i) => i.expiry_status === "EXPIRING_SOON").length,
+      expired: visibleInventories.filter((i) => i.expiry_status === "EXPIRED").length,
+    }
+  })()
 
   const transactions = historyRows.filter((t) => {
     if (warehouseFilter !== "전체" && t.warehouse_id !== warehouseFilter) return false

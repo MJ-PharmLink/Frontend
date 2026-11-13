@@ -160,6 +160,8 @@ export function ProductPage({ user }: Props) {
   const [categoryFilter, setCategoryFilter] = useState("전체")
   const [includeInactive, setIncludeInactive] = useState(false)
   const [showModal, setShowModal] = useState(false)
+  /** 수정 중인 상품. null 이면 신규 등록이다 */
+  const [editingItem, setEditingItem] = useState<Item | null>(null)
   const [form, setForm] = useState<ItemForm>(EMPTY_FORM)
 
   const [loading, setLoading] = useState(false)
@@ -281,17 +283,47 @@ export function ProductPage({ user }: Props) {
   const openCreate = () => {
     const categoryId = categories[0]?.category_id ?? 0
     const supplierId = suppliers[0]?.partner_id ?? 0
+    setEditingItem(null)
     setForm({
       ...EMPTY_FORM,
       category_id: categoryId,
       supplier_id: supplierId,
       code_number: nextCodeNumber(categoryId),
     })
+    setLoadError(null)
+    setShowModal(true)
+  }
+
+  /**
+   * 6.4 상품 수정. item_code 는 수정할 수 없으므로 폼에서는 읽기 전용으로 둔다.
+   * 단위는 "10박스"처럼 수량이 앞에 붙을 수 있어 숫자와 단위를 나눠 되돌린다.
+   */
+  const openEdit = (item: Item) => {
+    const match = /^(\d+)(.*)$/.exec(item.unit)
+    setEditingItem(item)
+    setForm({
+      item_name: item.item_name,
+      category_id: item.category_id,
+      code_number: item.item_code.slice(item.item_code.lastIndexOf("-") + 1),
+      supplier_id: item.supplier_id,
+      spec: item.spec ?? "",
+      unit_qty: match ? Number(match[1]) : 1,
+      unit: match ? match[2] : item.unit,
+      unit_cost: item.unit_cost,
+      unit_price: item.unit_price,
+      safety_stock: item.safety_stock,
+    })
+    setLoadError(null)
     setShowModal(true)
   }
 
   const changeCategory = (categoryId: number) =>
-      setForm((prev) => ({ ...prev, category_id: categoryId, code_number: nextCodeNumber(categoryId) }))
+      setForm((prev) => ({
+        ...prev,
+        category_id: categoryId,
+        // 등록된 상품의 코드는 카테고리를 바꿔도 재채번하지 않는다(DB 설계서 7.)
+        code_number: editingItem ? prev.code_number : nextCodeNumber(categoryId),
+      }))
 
   const handleSave = async () => {
     if (!import.meta.env.VITE_API_BASE_URL) {
@@ -329,6 +361,40 @@ export function ProductPage({ user }: Props) {
     setLoadError(null)
 
     try {
+      if (editingItem) {
+        // 6.4 — 변경할 필드만 보낸다. item_code 는 수정 대상이 아니다
+        const updated = await itemsApi.update(editingItem.item_id, {
+          item_name: itemName,
+          category_id: form.category_id,
+          spec: form.spec.trim(),
+          unit,
+          unit_cost: form.unit_cost,
+          unit_price: form.unit_price,
+          safety_stock: form.safety_stock,
+          supplier_id: form.supplier_id,
+        })
+
+        const category = categories.find((c) => c.category_id === updated.category_id)
+        const supplier = suppliers.find((s) => s.partner_id === updated.supplier_id)
+
+        setItems((prev) =>
+          prev.map((i) =>
+            i.item_id === updated.item_id
+              ? {
+                  ...updated,
+                  category_name: category?.category_name ?? i.category_name,
+                  supplier_name: supplier?.name ?? i.supplier_name,
+                }
+              : i,
+          ),
+        )
+
+        setShowModal(false)
+        setEditingItem(null)
+        setForm(EMPTY_FORM)
+        return
+      }
+
       const created = await itemsApi.create({
         item_code: itemCode,
         item_name: itemName,
@@ -357,7 +423,9 @@ export function ProductPage({ user }: Props) {
       setShowModal(false)
       setForm(EMPTY_FORM)
     } catch (error) {
-      setLoadError(errorMessage(error, "상품 등록에 실패했습니다."))
+      setLoadError(
+        errorMessage(error, editingItem ? "상품 수정에 실패했습니다." : "상품 등록에 실패했습니다."),
+      )
     } finally {
       setLoading(false)
     }
@@ -656,6 +724,13 @@ export function ProductPage({ user }: Props) {
                         >
                           {p.is_active ? "단종 처리" : "단종됨"}
                         </button>
+                        <button
+                            onClick={() => openEdit(p)}
+                            className="ml-3 text-xs font-medium"
+                            style={{ color: "#0B3D91" }}
+                        >
+                          수정
+                        </button>
                       </td>
                     </tr>
                 )
@@ -850,7 +925,7 @@ export function ProductPage({ user }: Props) {
                     {loadError}
                   </p>
                 )}
-                <h3 className="font-semibold text-lg text-gray-900 mb-1">새 상품 등록</h3>
+                <h3 className="font-semibold text-lg text-gray-900 mb-1">{editingItem ? "상품 수정" : "새 상품 등록"}</h3>
                 <p className="text-sm text-gray-500 mb-6">
                   카테고리를 고르면 상품코드 앞부분(IT-MED-카테고리코드)이 자동으로 정해집니다.
                 </p>
@@ -886,6 +961,7 @@ export function ProductPage({ user }: Props) {
                       </span>
                       <input
                           value={form.code_number}
+                          disabled={editingItem !== null}
                           onChange={(e) => update("code_number", onlyDigits(e.target.value).slice(0, 4))}
                           inputMode="numeric"
                           className="w-full min-w-0 px-3 py-2 text-sm font-mono outline-none"
