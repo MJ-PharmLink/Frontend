@@ -1,0 +1,1062 @@
+import { useEffect, useState } from "react"
+import {
+  categoriesApi,
+  errorMessage,
+  fetchAllPages,
+  itemsApi,
+  partnersApi,
+} from "../api"
+import type { AuthUser } from "../App"
+import { CATEGORIES, ITEMS as SAMPLE_ITEMS, SUPPLIERS } from "../data/sample"
+import {
+  ITEM_STATUS_LABELS,
+  ITEM_UNITS,
+  categoryTone,
+  formatDate,
+  formatMoney,
+  formatNumber,
+  itemCodePrefix,
+} from "../lib/domain"
+import type { BusinessPartner, Category, Item } from "../types/api"
+
+/**
+ * 6. 상품(의약품) 마스터.
+ *
+ * 수량(재고)은 items가 아니라 inventories에 있으므로 이 화면에서는 다루지 않는다.
+ * 상품을 등록하면 서버가 기본 창고에 수량 0인 재고 레코드를 함께 만든다(6.3).
+ */
+
+/** 공급처는 5.1 거래처 목록에서 partner_type=SUPPLIER 로 조회한 결과를 쓴다 */
+const ACTIVE_SUPPLIERS = SUPPLIERS.filter((s) => s.is_active)
+
+const ITEMS = SAMPLE_ITEMS
+
+
+const onlyDigits = (value: string) => value.replace(/\D/g, "")
+
+const EMPTY_FORM = {
+  item_name: "",
+  category_id: CATEGORIES[0].category_id,
+  code_number: "0001",
+  supplier_id: ACTIVE_SUPPLIERS[0].partner_id,
+  spec: "",
+  unit_qty: 1,
+  unit: ITEM_UNITS[0] as string,
+  unit_cost: 0,
+  unit_price: 0,
+  safety_stock: 0,
+}
+
+type ItemForm = typeof EMPTY_FORM
+
+/** 숫자 입력 + 화살표(1단위 증감) + 뒤에 연한 색으로 고정되는 단위 */
+function QuantityInput({
+                         value,
+                         onChange,
+                         unit,
+                         unitOptions,
+                         onUnitChange,
+                       }: {
+  value: number
+  onChange: (next: number) => void
+  unit: string
+  unitOptions?: readonly string[]
+  onUnitChange?: (next: string) => void
+}) {
+  const step = (delta: number) => onChange(Math.max(0, value + delta))
+
+  return (
+      <div className="flex items-stretch rounded-lg border border-gray-300 bg-white overflow-hidden focus-within:border-blue-500">
+        <input
+            type="text"
+            inputMode="numeric"
+            value={value}
+            onChange={(e) => onChange(Number(onlyDigits(e.target.value) || 0))}
+            className="w-full min-w-0 px-3 py-2 text-sm outline-none"
+        />
+        {unitOptions ? (
+            <select
+                value={unit}
+                onChange={(e) => onUnitChange?.(e.target.value)}
+                aria-label="단위"
+                className="shrink-0 self-stretch pl-1 pr-2 text-sm bg-transparent text-gray-400 outline-none cursor-pointer"
+            >
+              {unitOptions.map((u) => (
+                  <option key={u} value={u} className="text-gray-700">{u}</option>
+              ))}
+            </select>
+        ) : (
+            <span className="shrink-0 self-center pr-3 text-sm text-gray-400">{unit}</span>
+        )}
+        <div className="flex flex-col shrink-0 border-l border-gray-200">
+          <button
+              type="button"
+              aria-label="1 증가"
+              onClick={() => step(1)}
+              className="flex-1 px-2 flex items-center justify-center text-gray-400 hover:bg-gray-100 hover:text-gray-700 transition-colors"
+          >
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+              <polyline points="18 15 12 9 6 15" />
+            </svg>
+          </button>
+          <button
+              type="button"
+              aria-label="1 감소"
+              onClick={() => step(-1)}
+              className="flex-1 px-2 flex items-center justify-center text-gray-400 border-t border-gray-200 hover:bg-gray-100 hover:text-gray-700 transition-colors"
+          >
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+        </div>
+      </div>
+  )
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+      <div>
+        <label className="block text-xs font-medium text-gray-600 mb-1.5">{label}</label>
+        {children}
+      </div>
+  )
+}
+
+const selectClass =
+    "w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white outline-none focus:border-blue-500 cursor-pointer"
+const inputClass =
+    "w-full px-3 py-2 text-sm border border-gray-300 rounded-lg outline-none focus:border-blue-500"
+
+interface Props {
+  user: AuthUser
+}
+
+type TabKey = "items" | "suppliers" | "categories"
+
+const EMPTY_CATEGORY_FORM = { category_name: "", description: "" }
+
+export function ProductPage({ user }: Props) {
+  const [tab, setTab] = useState<TabKey>("items")
+  const [suppliers, setSuppliers] = useState<BusinessPartner[]>(
+    import.meta.env.VITE_API_BASE_URL ? [] : ACTIVE_SUPPLIERS
+  )
+  // 제약회사 탭에서는 단종된 공급처도 보여 준다
+  const [allSuppliers, setAllSuppliers] = useState<BusinessPartner[]>(
+    import.meta.env.VITE_API_BASE_URL ? [] : SUPPLIERS
+  )
+  const [categories, setCategories] = useState<Category[]>(
+    import.meta.env.VITE_API_BASE_URL ? [] : CATEGORIES
+  )
+  const [editingCategory, setEditingCategory] = useState<Category | null>(null)
+  const [showCategoryModal, setShowCategoryModal] = useState(false)
+  const [categoryForm, setCategoryForm] = useState(EMPTY_CATEGORY_FORM)
+  const [categoryError, setCategoryError] = useState<string | null>(null)
+  const [savingCategory, setSavingCategory] = useState(false)
+  const [items, setItems] = useState<Item[]>(
+    import.meta.env.VITE_API_BASE_URL ? [] : ITEMS
+  )
+  const [keyword, setKeyword] = useState("")
+  const [categoryFilter, setCategoryFilter] = useState("전체")
+  const [includeInactive, setIncludeInactive] = useState(false)
+  const [showModal, setShowModal] = useState(false)
+  /** 수정 중인 상품. null 이면 신규 등록이다 */
+  const [editingItem, setEditingItem] = useState<Item | null>(null)
+  const [form, setForm] = useState<ItemForm>(EMPTY_FORM)
+
+  const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+
+  // 실제 백엔드가 연결되어 있으면 샘플 데이터 대신 DB에서 조회한다.
+  useEffect(() => {
+    if (!import.meta.env.VITE_API_BASE_URL) return
+
+    let cancelled = false
+
+    async function loadProducts() {
+      setLoading(true)
+      setLoadError(null)
+
+      try {
+        const [categoryRows, supplierRows, itemRows] = await Promise.all([
+          categoriesApi.list(),
+          fetchAllPages((page, pageSize) =>
+            partnersApi.list({
+              partner_type: "SUPPLIER",
+              page,
+              page_size: pageSize,
+            })
+          ),
+          fetchAllPages((page, pageSize) =>
+            itemsApi.list({ page, page_size: pageSize })
+          ),
+        ])
+
+        const categoryMap = new Map(
+          categoryRows.map((category) => [
+            category.category_id,
+            category.category_name,
+          ])
+        )
+
+        const supplierMap = new Map(
+          supplierRows.map((supplier) => [
+            supplier.partner_id,
+            supplier.name,
+          ])
+        )
+
+        const mappedItems = itemRows.map((item) => ({
+          ...item,
+          category_name: categoryMap.get(item.category_id) ?? "기타",
+          supplier_name: supplierMap.get(item.supplier_id) ?? "-",
+        }))
+
+        if (!cancelled) {
+          setCategories(categoryRows)
+          setAllSuppliers(supplierRows)
+          const activeSuppliers = supplierRows.filter(
+            (supplier) => supplier.is_active
+          )
+          setSuppliers(activeSuppliers)
+          setForm((prev) => ({
+            ...prev,
+            category_id: categoryRows.some(
+              (category) => category.category_id === prev.category_id
+            )
+              ? prev.category_id
+              : (categoryRows[0]?.category_id ?? 0),
+            supplier_id: activeSuppliers.some(
+              (supplier) => supplier.partner_id === prev.supplier_id
+            )
+              ? prev.supplier_id
+              : (activeSuppliers[0]?.partner_id ?? 0),
+          }))
+          setItems(mappedItems)
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setLoadError(errorMessage(error, "상품 데이터를 불러오지 못했습니다."))
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+
+    void loadProducts()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+
+  // 6.1 keyword 는 상품 코드 또는 제품명을 검색하고, 기본적으로 단종 상품은 제외한다
+  const filteredItems = items.filter((p) => {
+    const matchKeyword = p.item_name.includes(keyword) || p.item_code.includes(keyword)
+    const matchCategory = categoryFilter === "전체" || p.category_name === categoryFilter
+    const matchActive = includeInactive || p.is_active
+    return matchKeyword && matchCategory && matchActive
+  })
+
+  const categoryName =
+      categories.find((c) => c.category_id === form.category_id)?.category_name ?? "기타"
+  const codePrefix = itemCodePrefix(categoryName)
+
+  /**
+   * 서버가 채번하는 값(DB 설계서 7.)을 등록 화면에서 미리 보여주기 위한 추정치.
+   * 실제 코드는 6.3 등록 응답의 item_code 를 따른다.
+   */
+  const nextCodeNumber = (categoryId: number) => {
+    const name = categories.find((c) => c.category_id === categoryId)?.category_name ?? "기타"
+    const prefix = itemCodePrefix(name)
+    const used = items
+        .filter((p) => p.item_code.startsWith(prefix))
+        .map((p) => Number(p.item_code.slice(prefix.length)))
+        .filter((n) => Number.isFinite(n))
+    return String((used.length ? Math.max(...used) : 0) + 1).padStart(4, "0")
+  }
+
+  const update = <K extends keyof ItemForm>(key: K, value: ItemForm[K]) =>
+      setForm((prev) => ({ ...prev, [key]: value }))
+
+  const openCreate = () => {
+    const categoryId = categories[0]?.category_id ?? 0
+    const supplierId = suppliers[0]?.partner_id ?? 0
+    setEditingItem(null)
+    setForm({
+      ...EMPTY_FORM,
+      category_id: categoryId,
+      supplier_id: supplierId,
+      code_number: nextCodeNumber(categoryId),
+    })
+    setLoadError(null)
+    setShowModal(true)
+  }
+
+  /**
+   * 6.4 상품 수정. item_code 는 수정할 수 없으므로 폼에서는 읽기 전용으로 둔다.
+   * 단위는 "10박스"처럼 수량이 앞에 붙을 수 있어 숫자와 단위를 나눠 되돌린다.
+   */
+  const openEdit = (item: Item) => {
+    const match = /^(\d+)(.*)$/.exec(item.unit)
+    setEditingItem(item)
+    setForm({
+      item_name: item.item_name,
+      category_id: item.category_id,
+      code_number: item.item_code.slice(item.item_code.lastIndexOf("-") + 1),
+      supplier_id: item.supplier_id,
+      spec: item.spec ?? "",
+      unit_qty: match ? Number(match[1]) : 1,
+      unit: match ? match[2] : item.unit,
+      unit_cost: item.unit_cost,
+      unit_price: item.unit_price,
+      safety_stock: item.safety_stock,
+    })
+    setLoadError(null)
+    setShowModal(true)
+  }
+
+  const changeCategory = (categoryId: number) =>
+      setForm((prev) => ({
+        ...prev,
+        category_id: categoryId,
+        // 등록된 상품의 코드는 카테고리를 바꿔도 재채번하지 않는다(DB 설계서 7.)
+        code_number: editingItem ? prev.code_number : nextCodeNumber(categoryId),
+      }))
+
+  const handleSave = async () => {
+    if (!import.meta.env.VITE_API_BASE_URL) {
+      setLoadError("백엔드 연결이 필요합니다.")
+      return
+    }
+
+    const itemName = form.item_name.trim()
+    const itemCode = `${codePrefix}${form.code_number.padStart(4, "0")}`
+    const unit = form.unit_qty > 1
+      ? `${form.unit_qty}${form.unit}`
+      : form.unit
+
+    if (!itemName) {
+      setLoadError("상품명을 입력해 주세요.")
+      return
+    }
+
+    if (!form.code_number || itemCode.length > 20) {
+      setLoadError("상품 코드를 확인해 주세요. 최대 20자입니다.")
+      return
+    }
+
+    if (!categories.some((c) => c.category_id === form.category_id)) {
+      setLoadError("유효한 카테고리를 선택해 주세요.")
+      return
+    }
+
+    if (!form.supplier_id) {
+      setLoadError("공급처를 선택해 주세요.")
+      return
+    }
+
+    setLoading(true)
+    setLoadError(null)
+
+    try {
+      if (editingItem) {
+        // 6.4 — 변경할 필드만 보낸다. item_code 는 수정 대상이 아니다
+        const updated = await itemsApi.update(editingItem.item_id, {
+          item_name: itemName,
+          category_id: form.category_id,
+          spec: form.spec.trim(),
+          unit,
+          unit_cost: form.unit_cost,
+          unit_price: form.unit_price,
+          safety_stock: form.safety_stock,
+          supplier_id: form.supplier_id,
+        })
+
+        const category = categories.find((c) => c.category_id === updated.category_id)
+        const supplier = suppliers.find((s) => s.partner_id === updated.supplier_id)
+
+        setItems((prev) =>
+          prev.map((i) =>
+            i.item_id === updated.item_id
+              ? {
+                  ...updated,
+                  category_name: category?.category_name ?? i.category_name,
+                  supplier_name: supplier?.name ?? i.supplier_name,
+                }
+              : i,
+          ),
+        )
+
+        setShowModal(false)
+        setEditingItem(null)
+        setForm(EMPTY_FORM)
+        return
+      }
+
+      const created = await itemsApi.create({
+        item_code: itemCode,
+        item_name: itemName,
+        category_id: form.category_id,
+        spec: form.spec.trim(),
+        unit,
+        unit_cost: form.unit_cost,
+        unit_price: form.unit_price,
+        safety_stock: form.safety_stock,
+        supplier_id: form.supplier_id,
+      })
+
+      const category = categories.find(
+        (c) => c.category_id === created.category_id
+      )
+      const supplier = suppliers.find(
+        (s) => s.partner_id === created.supplier_id
+      )
+
+      setItems((prev) => [{
+        ...created,
+        category_name: category?.category_name ?? "기타",
+        supplier_name: supplier?.name ?? "-",
+      }, ...prev])
+
+      setShowModal(false)
+      setForm(EMPTY_FORM)
+    } catch (error) {
+      setLoadError(
+        errorMessage(error, editingItem ? "상품 수정에 실패했습니다." : "상품 등록에 실패했습니다."),
+      )
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  /** 6.4 단종 처리 — is_active 토글 */
+  const toggleActive = async (itemId: number) => {
+    const target = items.find((item) => item.item_id === itemId)
+    if (!target || !target.is_active) return
+
+    if (!import.meta.env.VITE_API_BASE_URL) {
+      setLoadError("백엔드 연결이 필요합니다.")
+      return
+    }
+
+    const confirmed = window.confirm(
+      `${target.item_name} 상품을 단종 처리하시겠습니까?\\n단종 해제는 현재 지원되지 않습니다.`
+    )
+    if (!confirmed) return
+
+    setLoading(true)
+    setLoadError(null)
+
+    try {
+      await itemsApi.deactivate(itemId)
+      setItems((prev) =>
+        prev.map((item) =>
+          item.item_id === itemId
+            ? { ...item, is_active: false }
+            : item
+        )
+      )
+    } catch (error) {
+      setLoadError(errorMessage(error, "상품 단종 처리에 실패했습니다."))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // 6.6 카테고리 생성 / 6.7 수정 — 관리자 전용. 상품이 참조하므로 삭제는 없다
+  const canManageCategory = user.role === "ADMIN"
+
+  const openCategoryCreate = () => {
+    setEditingCategory(null)
+    setCategoryForm(EMPTY_CATEGORY_FORM)
+    setCategoryError(null)
+    setShowCategoryModal(true)
+  }
+
+  const openCategoryEdit = (category: Category) => {
+    setEditingCategory(category)
+    setCategoryForm({ category_name: category.category_name, description: category.description ?? "" })
+    setCategoryError(null)
+    setShowCategoryModal(true)
+  }
+
+  const saveCategory = async () => {
+    const name = categoryForm.category_name.trim()
+    const description = categoryForm.description.trim()
+
+    if (!name) {
+      setCategoryError("카테고리명은 필수입니다.")
+      return
+    }
+
+    if (name.length > 50) {
+      setCategoryError("카테고리명은 최대 50자입니다.")
+      return
+    }
+
+    if (description.length > 200) {
+      setCategoryError("카테고리 설명은 최대 200자입니다.")
+      return
+    }
+
+    const duplicated = categories.some(
+      (category) =>
+        category.category_name === name &&
+        category.category_id !== editingCategory?.category_id
+    )
+
+    if (duplicated) {
+      setCategoryError("이미 존재하는 카테고리명입니다.")
+      return
+    }
+
+    if (!import.meta.env.VITE_API_BASE_URL) {
+      setCategoryError("백엔드 연결이 필요합니다.")
+      return
+    }
+
+    setSavingCategory(true)
+    setCategoryError(null)
+
+    try {
+      const body = {
+        category_name: name,
+        description,
+      }
+
+      if (editingCategory) {
+        const updated = await categoriesApi.update(
+          editingCategory.category_id,
+          body
+        )
+
+        setCategories((prev) =>
+          prev.map((category) =>
+            category.category_id === updated.category_id
+              ? updated
+              : category
+          )
+        )
+
+        setItems((prev) =>
+          prev.map((item) =>
+            item.category_id === updated.category_id
+              ? { ...item, category_name: updated.category_name }
+              : item
+          )
+        )
+      } else {
+        const created = await categoriesApi.create(body)
+        setCategories((prev) => [...prev, created])
+      }
+
+      setShowCategoryModal(false)
+      setEditingCategory(null)
+      setCategoryForm(EMPTY_CATEGORY_FORM)
+      setCategoryError(null)
+    } catch (error) {
+      setCategoryError(
+        errorMessage(error, "카테고리 저장에 실패했습니다.")
+      )
+    } finally {
+      setSavingCategory(false)
+    }
+  }
+
+  return (
+      <div className="space-y-6">
+        {loading && (
+          <p className="text-sm text-gray-500">상품 데이터를 불러오는 중...</p>
+        )}
+        {loadError && (
+          <p className="text-sm text-red-600" role="alert">{loadError}</p>
+        )}
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">상품 관리</h1>
+            <p className="text-sm text-gray-500 mt-1">
+              등록된 의약품 및 상품 마스터를 조회하고 관리합니다.
+            </p>
+          </div>
+          {tab === "items" && (
+              <button
+                  onClick={openCreate}
+                  className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors"
+                  style={{ background: "#0B3D91" }}
+              >
+                + 새 상품 등록
+              </button>
+          )}
+          {tab === "categories" && canManageCategory && (
+              <button
+                  onClick={openCategoryCreate}
+                  className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors"
+                  style={{ background: "#0B3D91" }}
+              >
+                + 카테고리 생성
+              </button>
+          )}
+        </div>
+
+        {/* Tabs */}
+        <div className="flex gap-1 p-1 rounded-lg w-fit" style={{ background: "#F0F2F5" }}>
+          {([["items", "상품목록"], ["suppliers", "제약회사"], ["categories", "카테고리"]] as const).map(([key, label]) => (
+              <button
+                  key={key}
+                  onClick={() => setTab(key)}
+                  className="px-5 py-1.5 text-sm font-medium rounded-md transition-all duration-150"
+                  style={{
+                    background: tab === key ? "white" : "transparent",
+                    color: tab === key ? "#0B3D91" : "#888",
+                    boxShadow: tab === key ? "0 1px 4px rgba(0,0,0,0.08)" : "none",
+                  }}
+              >
+                {label}
+              </button>
+          ))}
+        </div>
+
+        {tab === "items" && (
+        <>
+        {/* Filter / Search Bar */}
+        <div className="bg-white p-4 rounded-xl border border-gray-200 flex flex-wrap gap-4 justify-between items-center">
+          <div className="flex items-center gap-3 flex-1 min-w-[280px]">
+            <input
+                type="text"
+                placeholder="상품명, 상품코드 검색..."
+                value={keyword}
+                onChange={(e) => setKeyword(e.target.value)}
+                className="w-full px-3.5 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-blue-500"
+            />
+          </div>
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-1.5 text-sm text-gray-600 cursor-pointer">
+              <input
+                  type="checkbox"
+                  checked={includeInactive}
+                  onChange={(e) => setIncludeInactive(e.target.checked)}
+                  className="cursor-pointer"
+              />
+              단종 포함
+            </label>
+            <select
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value)}
+                className="px-3.5 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:border-blue-500"
+            >
+              <option value="전체">전체 카테고리</option>
+              {categories.map((c) => (
+                  <option key={c.category_id} value={c.category_name}>{c.category_name}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* Table */}
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm text-gray-600">
+              <thead className="bg-gray-50 text-xs text-gray-500 border-b border-gray-200">
+              <tr>
+                <th className="px-4 py-3.5 font-semibold">상품코드</th>
+                <th className="px-4 py-3.5 font-semibold">상품명</th>
+                <th className="px-4 py-3.5 font-semibold">제조회사</th>
+                <th className="px-4 py-3.5 font-semibold">카테고리</th>
+                <th className="px-4 py-3.5 font-semibold">규격 / 단위</th>
+                <th className="px-4 py-3.5 font-semibold text-right">매입가</th>
+                <th className="px-4 py-3.5 font-semibold text-right">판매가</th>
+                <th className="px-4 py-3.5 font-semibold text-right">안전재고</th>
+                <th className="px-4 py-3.5 font-semibold text-center">상태</th>
+                <th className="px-4 py-3.5 font-semibold text-center"></th>
+              </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+              {filteredItems.map((p) => {
+                const catStyle = categoryTone(p.category_name)
+                return (
+                    <tr key={p.item_id} className="hover:bg-gray-50 transition-colors" style={{ opacity: p.is_active ? 1 : 0.55 }}>
+                      <td className="px-4 py-3 font-mono text-xs font-semibold text-gray-800">
+                        {p.item_code}
+                      </td>
+                      <td className="px-4 py-3">
+                        <p className="font-medium text-gray-900">{p.item_name}</p>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-600">{p.supplier_name}</td>
+                      <td className="px-4 py-3">
+                        <span
+                            className="inline-block px-2.5 py-1 text-xs font-medium rounded-md"
+                            style={{ background: catStyle.bg, color: catStyle.color }}
+                        >
+                          {p.category_name}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-gray-500">
+                        {p.spec ?? "-"} ({p.unit})
+                      </td>
+                      <td className="px-4 py-3 text-right font-medium text-gray-700">
+                        {formatMoney(p.unit_cost)}
+                      </td>
+                      <td className="px-4 py-3 text-right font-semibold text-gray-900">
+                        {formatMoney(p.unit_price)}
+                      </td>
+                      <td className="px-4 py-3 text-right text-gray-700">
+                        {formatNumber(p.safety_stock)}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <span
+                            className="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full"
+                            style={p.is_active
+                                ? { background: "#DCFCE7", color: "#166534" }
+                                : { background: "#F3F4F6", color: "#6B7280" }}
+                        >
+                          {ITEM_STATUS_LABELS[p.is_active ? "ACTIVE" : "DISCONTINUED"]}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <button
+                            disabled={!p.is_active || loading}
+                            onClick={() => void toggleActive(p.item_id)}
+                            className="text-xs font-medium"
+                            style={{ color: p.is_active ? "#DC2626" : "#059669" }}
+                        >
+                          {p.is_active ? "단종 처리" : "단종됨"}
+                        </button>
+                        <button
+                            onClick={() => openEdit(p)}
+                            className="ml-3 text-xs font-medium"
+                            style={{ color: "#0B3D91" }}
+                        >
+                          수정
+                        </button>
+                      </td>
+                    </tr>
+                )
+              })}
+              </tbody>
+            </table>
+          </div>
+          {filteredItems.length === 0 && (
+              <div className="py-14 text-center text-sm text-gray-400">
+                조건에 맞는 상품이 없습니다.
+              </div>
+          )}
+        </div>
+        </>
+        )}
+
+        {/* 6.5~6.7 카테고리 */}
+        {tab === "suppliers" && (
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <div className="px-5 py-4 text-xs" style={{ color: "#888", borderBottom: "1px solid #E5EAF0" }}>
+                상품의 기본 공급처로 쓰는 제약회사입니다. 등록·수정은 거래처 관리에서 합니다.
+              </div>
+              <table className="w-full text-left text-sm text-gray-600">
+                <thead className="bg-gray-50 text-xs text-gray-500 border-b border-gray-200">
+                <tr>
+                  <th className="px-4 py-3.5 font-semibold">ID</th>
+                  <th className="px-4 py-3.5 font-semibold">제약회사명</th>
+                  <th className="px-4 py-3.5 font-semibold">사업자등록번호</th>
+                  <th className="px-4 py-3.5 font-semibold">담당자</th>
+                  <th className="px-4 py-3.5 font-semibold">연락처</th>
+                  <th className="px-4 py-3.5 font-semibold text-right">취급 상품</th>
+                  <th className="px-4 py-3.5 font-semibold text-center">상태</th>
+                </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200">
+                {allSuppliers.map((s) => {
+                  const count = items.filter((i) => i.supplier_id === s.partner_id).length
+                  return (
+                      <tr key={s.partner_id} className="hover:bg-gray-50 transition-colors" style={{ opacity: s.is_active ? 1 : 0.55 }}>
+                        <td className="px-4 py-3 text-xs text-gray-400">{s.partner_id}</td>
+                        <td className="px-4 py-3 font-medium text-gray-900">{s.name}</td>
+                        <td className="px-4 py-3 text-xs text-gray-500" style={{ fontFamily: "'Inter', sans-serif" }}>{s.business_number}</td>
+                        <td className="px-4 py-3 text-xs text-gray-500">{s.manager_name ?? "-"}</td>
+                        <td className="px-4 py-3 text-xs text-gray-500" style={{ fontFamily: "'Inter', sans-serif" }}>{s.phone}</td>
+                        <td className="px-4 py-3 text-right text-gray-700">{formatNumber(count)}</td>
+                        <td className="px-4 py-3 text-center">
+                          <span
+                              className="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full"
+                              style={s.is_active
+                                  ? { background: "#DCFCE7", color: "#166534" }
+                                  : { background: "#F3F4F6", color: "#6B7280" }}
+                          >
+                            {s.is_active ? "활성" : "비활성"}
+                          </span>
+                        </td>
+                      </tr>
+                  )
+                })}
+                </tbody>
+              </table>
+              {allSuppliers.length === 0 && (
+                  <div className="py-14 text-center text-sm text-gray-400">
+                    등록된 제약회사가 없습니다.
+                  </div>
+              )}
+            </div>
+        )}
+
+        {tab === "categories" && (
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <div className="px-5 py-4 text-xs" style={{ color: "#888", borderBottom: "1px solid #E5EAF0" }}>
+                상품 코드 접두어는 카테고리로 정해집니다. 상품이 참조하고 있어 카테고리 삭제는 제공되지 않습니다.
+              </div>
+              <table className="w-full text-left text-sm text-gray-600">
+                <thead className="bg-gray-50 text-xs text-gray-500 border-b border-gray-200">
+                <tr>
+                  <th className="px-4 py-3.5 font-semibold">ID</th>
+                  <th className="px-4 py-3.5 font-semibold">카테고리명</th>
+                  <th className="px-4 py-3.5 font-semibold">코드</th>
+                  <th className="px-4 py-3.5 font-semibold">설명</th>
+                  <th className="px-4 py-3.5 font-semibold text-right">상품 수</th>
+                  <th className="px-4 py-3.5 font-semibold">생성일</th>
+                  <th className="px-4 py-3.5 font-semibold"></th>
+                </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200">
+                {categories.map((c) => {
+                  const tone = categoryTone(c.category_name)
+                  const count = items.filter((i) => i.category_id === c.category_id).length
+                  return (
+                      <tr key={c.category_id} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-4 py-3 text-xs text-gray-400">{c.category_id}</td>
+                        <td className="px-4 py-3">
+                          <span className="inline-block px-2.5 py-1 text-xs font-medium rounded-md" style={{ background: tone.bg, color: tone.color }}>
+                            {c.category_name}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 font-mono text-xs text-gray-500">{itemCodePrefix(c.category_name)}</td>
+                        <td className="px-4 py-3 text-xs text-gray-500">{c.description ?? "-"}</td>
+                        <td className="px-4 py-3 text-right text-gray-700">{count}</td>
+                        <td className="px-4 py-3 text-xs text-gray-400">{formatDate(c.created_at)}</td>
+                        <td className="px-4 py-3 text-right">
+                          {canManageCategory && (
+                              <button onClick={() => openCategoryEdit(c)} className="text-xs font-medium" style={{ color: "#0B3D91" }}>수정</button>
+                          )}
+                        </td>
+                      </tr>
+                  )
+                })}
+                </tbody>
+              </table>
+            </div>
+        )}
+
+        {/* 6.6 / 6.7 카테고리 생성·수정 */}
+        {showCategoryModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.45)" }} onClick={() => setShowCategoryModal(false)}>
+              <div className="bg-white w-full max-w-md p-7 relative rounded-xl" onClick={(e) => e.stopPropagation()}>
+                <button onClick={() => setShowCategoryModal(false)} aria-label="닫기" className="absolute top-5 right-5 opacity-40 hover:opacity-100">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#333" strokeWidth="2">
+                    <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+                <h3 className="font-semibold text-lg mb-1 text-gray-900">
+                  {editingCategory ? "카테고리 수정" : "카테고리 생성"}
+                </h3>
+                <p className="text-sm mb-5" style={{ color: "#888" }}>
+                  {editingCategory
+                      ? "이미 등록된 상품의 코드는 카테고리를 바꿔도 재채번되지 않습니다."
+                      : "초기 5종 외의 카테고리는 상품 코드 접두어로 OT를 사용합니다."}
+                </p>
+
+                {categoryError && (
+                    <p className="mb-4 px-4 py-2.5 text-sm" style={{ background: "#FEF2F2", color: "#DC2626", borderRadius: 6 }}>{categoryError}</p>
+                )}
+
+                <div className="space-y-4">
+                  <Field label="카테고리명">
+                    <input
+                        value={categoryForm.category_name}
+                        onChange={(e) => setCategoryForm((prev) => ({ ...prev, category_name: e.target.value }))}
+                        placeholder="피부과·안과용 의약품"
+                        className={inputClass}
+                    />
+                  </Field>
+                  <Field label="설명">
+                    <input
+                        value={categoryForm.description}
+                        onChange={(e) => setCategoryForm((prev) => ({ ...prev, description: e.target.value.slice(0, 200) }))}
+                        placeholder="연고, 크림, 점안액, 피부 외용제 등"
+                        className={inputClass}
+                    />
+                  </Field>
+                </div>
+
+                <div className="flex gap-3 mt-6 justify-end">
+                  <button onClick={() => setShowCategoryModal(false)} className="px-5 py-2 text-sm font-medium border border-gray-300 rounded-lg text-gray-600">취소</button>
+                  <button
+                      onClick={() => void saveCategory()}
+                      disabled={savingCategory}
+                      className="px-5 py-2 text-sm font-medium text-white rounded-lg disabled:opacity-50" style={{ background: "#0B3D91" }}>저장</button>
+                </div>
+              </div>
+            </div>
+        )}
+
+        {/* 새 상품 등록 모달 */}
+        {showModal && (
+            <div
+                className="fixed inset-0 z-50 flex items-center justify-center p-4"
+                style={{ background: "rgba(0,0,0,0.45)" }}
+                onClick={() => setShowModal(false)}
+            >
+              <div
+                  className="bg-white w-full max-w-2xl p-8 relative rounded-xl"
+                  style={{ maxHeight: "90vh", overflowY: "auto" }}
+                  onClick={(e) => e.stopPropagation()}
+              >
+                <button
+                    onClick={() => setShowModal(false)}
+                    aria-label="닫기"
+                    className="absolute top-5 right-5 opacity-40 hover:opacity-100 transition-opacity"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#333" strokeWidth="2">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+
+                {loadError && (
+                  <p role="alert" className="text-sm text-red-600 mb-3">
+                    {loadError}
+                  </p>
+                )}
+                <h3 className="font-semibold text-lg text-gray-900 mb-1">{editingItem ? "상품 수정" : "새 상품 등록"}</h3>
+                <p className="text-sm text-gray-500 mb-6">
+                  카테고리를 고르면 상품코드 앞부분(IT-MED-카테고리코드)이 자동으로 정해집니다.
+                </p>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="md:col-span-2">
+                    <Field label="상품명">
+                      <input
+                          value={form.item_name}
+                          onChange={(e) => update("item_name", e.target.value)}
+                          placeholder="타이레놀정 500mg"
+                          className={inputClass}
+                      />
+                    </Field>
+                  </div>
+
+                  <Field label="카테고리">
+                    <select
+                        value={form.category_id}
+                        onChange={(e) => changeCategory(Number(e.target.value))}
+                        className={selectClass}
+                    >
+                      {categories.map((c) => (
+                          <option key={c.category_id} value={c.category_id}>{c.category_name}</option>
+                      ))}
+                    </select>
+                  </Field>
+
+                  <Field label="상품코드">
+                    <div className="flex items-stretch rounded-lg border border-gray-300 bg-white overflow-hidden focus-within:border-blue-500">
+                      <span className="shrink-0 px-3 py-2 text-sm font-mono text-gray-400 bg-gray-50 border-r border-gray-300">
+                        {codePrefix}
+                      </span>
+                      <input
+                          value={form.code_number}
+                          disabled={editingItem !== null}
+                          onChange={(e) => update("code_number", onlyDigits(e.target.value).slice(0, 4))}
+                          inputMode="numeric"
+                          className="w-full min-w-0 px-3 py-2 text-sm font-mono outline-none"
+                      />
+                    </div>
+                  </Field>
+
+                  <Field label="공급처">
+                    <select
+                        value={form.supplier_id}
+                        onChange={(e) => update("supplier_id", Number(e.target.value))}
+                        className={selectClass}
+                    >
+                      {suppliers.map((s) => (
+                          <option key={s.partner_id} value={s.partner_id}>{s.name}</option>
+                      ))}
+                    </select>
+                  </Field>
+
+                  <Field label="규격">
+                    <input
+                        value={form.spec}
+                        onChange={(e) => update("spec", e.target.value)}
+                        placeholder="500mg x 10정"
+                        className={inputClass}
+                    />
+                  </Field>
+
+                  <Field label="단위">
+                    <QuantityInput
+                        value={form.unit_qty}
+                        onChange={(v) => update("unit_qty", v)}
+                        unit={form.unit}
+                        unitOptions={ITEM_UNITS}
+                        onUnitChange={(u) => update("unit", u)}
+                    />
+                  </Field>
+
+                  <Field label="안전재고">
+                    <QuantityInput
+                        value={form.safety_stock}
+                        onChange={(v) => update("safety_stock", v)}
+                        unit={form.unit}
+                    />
+                  </Field>
+
+                  <Field label="매입가 (원가)">
+                    <div className="flex items-stretch rounded-lg border border-gray-300 bg-white overflow-hidden focus-within:border-blue-500">
+                      <input
+                          value={form.unit_cost}
+                          onChange={(e) => update("unit_cost", Number(onlyDigits(e.target.value) || 0))}
+                          inputMode="numeric"
+                          className="w-full min-w-0 px-3 py-2 text-sm outline-none"
+                      />
+                      <span className="shrink-0 self-center pr-3 text-sm text-gray-400">원</span>
+                    </div>
+                  </Field>
+
+                  <Field label="판매가">
+                    <div className="flex items-stretch rounded-lg border border-gray-300 bg-white overflow-hidden focus-within:border-blue-500">
+                      <input
+                          value={form.unit_price}
+                          onChange={(e) => update("unit_price", Number(onlyDigits(e.target.value) || 0))}
+                          inputMode="numeric"
+                          className="w-full min-w-0 px-3 py-2 text-sm outline-none"
+                      />
+                      <span className="shrink-0 self-center pr-3 text-sm text-gray-400">원</span>
+                    </div>
+                  </Field>
+                </div>
+
+                <p className="mt-6 text-xs text-gray-400">
+                  등록하면 기본 창고에 수량 0인 재고가 함께 만들어집니다. 입고는 매입 등록에서 처리합니다.
+                </p>
+
+                <div className="flex gap-3 mt-4 justify-end">
+                  <button
+                      onClick={() => setShowModal(false)}
+                      className="px-5 py-2 text-sm font-medium border border-gray-300 rounded-lg text-gray-600"
+                  >
+                    취소
+                  </button>
+                  <button
+                      onClick={handleSave}
+                      className="px-5 py-2 text-sm font-medium text-white rounded-lg"
+                      style={{ background: "#0B3D91" }}
+                  >
+                    등록
+                  </button>
+                </div>
+              </div>
+            </div>
+        )}
+      </div>
+  )
+}
+
+export default ProductPage

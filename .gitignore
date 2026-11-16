@@ -1,0 +1,30 @@
+node_modules/
+dist/
+build/
+.cache/
+.env*
+!.env.example
+# 운영 빌드용 API 주소(비밀값 아님)는 공유한다
+!.env.production
+.vite/
+vite.config.*.timestamp-*
+*.tsbuildinfo
+*-debug.log*
+logs/
+*.log
+.claude-replay.*
+.tmp-*
+/.figma/design-context/
+
+# IDE — 개인 설정이라 공유하지 않는다.
+# .vscode 는 권장 확장 목록만 공유한다.
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Platform-managed agentplat state, not project source. In the
+# client-initiated single-repo workspace layout (make's `Path: "."` spec) the
+# repo root IS the workspace root, so these land inside this repo rather than
+# beside it.
+/.plugins/
+/.opencode-skills/
