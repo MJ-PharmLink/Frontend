@@ -126,6 +126,8 @@ export default function InventoryPage() {
   const [warehouseFilter, setWarehouseFilter] = useState<number | "전체">("전체")
   const [inventoryLoading, setInventoryLoading] = useState(false)
   const [inventoryError, setInventoryError] = useState<string | null>(null)
+  /** 값이 바뀌면 재고·LOT·이력을 서버에서 다시 불러온다 (재고 조정 후 사용) */
+  const [reloadKey, setReloadKey] = useState(0)
   /** 상품 ID → 카테고리 (기존 필터가 쓰던 이름을 그대로 둔다) */
   const ITEM_CATEGORY = {
     get: (itemId: number) => itemMeta.get(itemId)?.category_id,
@@ -293,7 +295,7 @@ export default function InventoryPage() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [reloadKey])
 
   const visibleInventories = warehouseFilter === "전체"
     ? inventories
@@ -428,7 +430,7 @@ export default function InventoryPage() {
     }
 
     const message =
-      `${inventory.item_name} / ${lot.lot_number}\\n` +
+      `${inventory.item_name} / ${lot.lot_number}\n` +
       `${form.adjustment_type === "INCREASE" ? "증가" : "감소"} ` +
       `${form.quantity}개를 실제 DB에 반영하시겠습니까?`
 
@@ -448,8 +450,11 @@ export default function InventoryPage() {
         memo: form.memo.trim(),
       })
 
-      // 서버에서 실제 재고, LOT, 이력을 다시 조회한다.
-      window.location.reload()
+      // 페이지 새로고침은 App의 route state를 초기화해 대시보드로 이동시키므로,
+      // 화면은 그대로 두고 서버에서 실제 재고, LOT, 이력만 다시 조회한다.
+      setShowAdjust(false)
+      setAdjusting(false)
+      setReloadKey((key) => key + 1)
     } catch (error) {
       setAdjustError(
         errorMessage(error, "재고 조정에 실패했습니다.")
@@ -945,8 +950,10 @@ export default function InventoryPage() {
                     <div>
                       <label className="block text-xs font-medium mb-1.5" style={{ color: "#666" }}>수량</label>
                       <input
-                          value={form.quantity}
-                          onChange={(e) => setForm((prev) => ({ ...prev, quantity: Math.max(1, Number(e.target.value.replace(/\D/g, "") || 1)) }))}
+                          // 입력 중에는 칸을 비울 수 있게 한다 (빈 값은 0으로 두고 화면엔 빈 칸으로 표시).
+                          // 1 미만은 applyAdjustment에서 "조정 수량은 1 이상의 정수여야 합니다."로 막는다.
+                          value={form.quantity === 0 ? "" : form.quantity}
+                          onChange={(e) => setForm((prev) => ({ ...prev, quantity: Number(e.target.value.replace(/\D/g, "")) }))}
                           inputMode="numeric"
                           className="w-full px-3 py-2 text-sm outline-none"
                           style={{ border: "1px solid #E5EAF0", borderRadius: 6, color: "#333" }}
