@@ -174,3 +174,21 @@ src/
 
 - `main` — 기본 브랜치
 - `dev` — 개발 통합 브랜치. `feat/{기능명}`, `fix/{내용}` 브랜치에서 작업하고 `dev` 로 PR을 보낸다
+
+## AI 챗봇 (소리)
+
+공통 레이아웃(`AdminLayout`) 오른쪽 아래에 챗봇 패널이 붙는다. 서버는 `POST /api/v1/ai/chat` (조회 전용).
+
+| 파일 | 내용 |
+| --- | --- |
+| `src/components/chatbot/` | 패널, 답변 카드, 마크다운 렌더러 |
+| `src/lib/chatbot.ts` | 오류 문구 매핑, history(최근 10개), 조회 유형 배지, 추천 질문 기본값 |
+| `src/api/endpoints.ts` `aiApi` | `chat()`(95초 타임아웃 + 취소), `capabilities()` |
+| `docs/chatbot/` | 테스트 질문 25개, 사용 가이드, 시연 시나리오, 백엔드 확인 요청 |
+
+질문 유형별 회귀 테스트는 백엔드가 떠 있는 상태에서 돌린다. 결과는 `docs/chatbot/reports/` 에 남는다.
+
+```bash
+AI_TEST_USERNAME=<ID> AI_TEST_PASSWORD=<PW> pnpm test:ai            # 전체 25개
+AI_TEST_USERNAME=<ID> AI_TEST_PASSWORD=<PW> pnpm test:ai --only LS  # 부족 재고만
+```

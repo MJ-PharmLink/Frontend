@@ -161,6 +161,7 @@ export type ErrorCode =
   | "SALE_CREATION_FAILED"
   | "PDF_GENERATION_FAILED"
   | "INVENTORY_QUERY_FAILED"
+  | "AI_SERVICE_UNAVAILABLE"
 
 /* ───────────────────── 3. 인증 · 4. 사용자 ───────────────────── */
 
@@ -802,4 +803,74 @@ export type UpdateCompanyRequest = Omit<Company, "company_id" | "updated_at"> & 
   wholesale_license_number?: string
   fax?: string
   email?: string
+}
+
+/* ───────────────────── 15. AI 챗봇 (조회 전용 MVP) ───────────────────── */
+
+/**
+ * 서버가 답변을 만들 때 고른 조회 유형.
+ * 현재 백엔드(feat/ai-chatbot-backend)는 GENERAL · LOW_STOCK · INVENTORY 를 돌려준다.
+ * 유통기한 조회가 추가되면 새 값이 올 수 있으므로 문자열도 허용한다.
+ */
+export type AiIntent = "GENERAL" | "LOW_STOCK" | "INVENTORY" | "EXPIRY" | (string & {})
+
+/** 직전 대화 맥락. 최근 10개까지만 보낸다 */
+export interface AiChatHistoryItem {
+  role: "user" | "assistant"
+  content: string
+}
+
+export interface AiChatRequest {
+  /** 1~1000자 */
+  message: string
+  /** API Spec v0.1 — 서버가 아직 읽지 않아도 무시되므로 함께 보낸다 */
+  history?: AiChatHistoryItem[]
+}
+
+/** 답변 근거가 된 조회 결과 한 건 */
+export interface AiSource {
+  /** 조회 함수 또는 화면 이름 (예: get_low_stock_items) */
+  type?: string
+  title?: string
+  /** 표로 그릴 행. 키는 snake_case 그대로 쓴다 */
+  rows?: Record<string, unknown>[]
+  [key: string]: unknown
+}
+
+/** 서버가 실제로 조회한 조건 (창고, 키워드, 페이지, 결과 건수 등) */
+export interface AiQueryContext {
+  function_name?: string
+  keyword?: string | null
+  warehouse_id?: number | null
+  page?: number
+  total_count?: number
+  total_pages?: number
+  has_next?: boolean
+  [key: string]: unknown
+}
+
+/**
+ * 7. POST /ai/chat 응답.
+ * answer·intent는 현재 서버가 항상 주는 값이고, 나머지는 API Spec v0.1에 있으나
+ * 아직 서버가 보내지 않는 값이라 선택 필드로 둔다.
+ */
+export interface AiChatResponse {
+  answer: string
+  intent: AiIntent
+  sources?: AiSource[]
+  query_context?: AiQueryContext | null
+  generated_at?: IsoDateTime
+}
+
+export interface AiCapability {
+  intent: AiIntent
+  label: string
+  description?: string
+  examples?: string[]
+}
+
+/** GET /ai/capabilities 응답 */
+export interface AiCapabilities {
+  read_only?: boolean
+  capabilities: AiCapability[]
 }

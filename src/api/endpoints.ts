@@ -5,6 +5,9 @@
 
 import { request, requestBlob, requestEmpty, requestPage } from "./client"
 import type {
+  AiCapabilities,
+  AiChatRequest,
+  AiChatResponse,
   ApproveOrderResponse,
   BusinessPartner,
   CancelOrderResponse,
@@ -258,6 +261,54 @@ export const companyApi = {
   get: () => request<Company>("/company"),
   /** 13.2 회사 정보 수정 — 관리자. 전체 교체(PUT) */
   update: (body: UpdateCompanyRequest) => request<Company>("/company", { method: "PUT", body }),
+}
+
+/* ───────────────────── 15. AI 챗봇 ───────────────────── */
+
+/**
+ * 서버는 Gemini를 최대 두 번(함수 선택 → 답변 생성) 부르고, 각 호출의 읽기 제한이 45초다.
+ * 그보다 조금 길게 기다린 뒤 끊는다.
+ */
+export const AI_CHAT_TIMEOUT_MS = 95_000
+
+/** 응답이 제한 시간 안에 오지 않았을 때 */
+export class AiTimeoutError extends Error {
+  constructor() {
+    super("응답 시간이 초과되었습니다.")
+    this.name = "AiTimeoutError"
+  }
+}
+
+export const aiApi = {
+  /**
+   * 15.1 챗봇 질문. 호출부가 넘긴 signal(취소 버튼)과 제한 시간을 함께 건다.
+   * 제한 시간으로 끊기면 AiTimeoutError, 사용자가 취소하면 AbortError가 난다.
+   */
+  chat: async (body: AiChatRequest, signal?: AbortSignal): Promise<AiChatResponse> => {
+    const controller = new AbortController()
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, AI_CHAT_TIMEOUT_MS)
+    const forwardAbort = () => controller.abort()
+    signal?.addEventListener("abort", forwardAbort)
+    try {
+      return await request<AiChatResponse>("/ai/chat", {
+        method: "POST",
+        body,
+        signal: controller.signal,
+      })
+    } catch (err) {
+      if (timedOut) throw new AiTimeoutError()
+      throw err
+    } finally {
+      clearTimeout(timer)
+      signal?.removeEventListener("abort", forwardAbort)
+    }
+  },
+  /** 15.2 챗봇이 답할 수 있는 질문 유형. 서버에 아직 없으면 호출부가 기본 목록을 쓴다 */
+  capabilities: () => request<AiCapabilities>("/ai/capabilities"),
 }
 
 export type { Page }

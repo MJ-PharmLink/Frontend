@@ -2,6 +2,7 @@ import { ReactNode, useState } from "react"
 import type { AdminRoute } from "../App"
 import { ROLE_LABELS } from "../lib/domain"
 import type { AuthUser, UserRole } from "../types/api"
+import ChatbotPanel from "./chatbot/ChatbotPanel"
 
 interface NavItem {
     id: AdminRoute
@@ -323,6 +324,9 @@ export default function AdminLayout({ user, currentRoute, onNavigate, onLogout, 
                     {children}
                 </main>
             </div>
+
+            {/* AI 챗봇 — 모든 역할에 노출 (서버 권한: ADMIN · SALES · WAREHOUSE) */}
+            <ChatbotPanel user={user} onNavigate={onNavigate} />
         </div>
     )
 }
