@@ -1,0 +1,36 @@
+# dev·main으로 가는 PR마다 "설치 → 타입 검사 → 운영 빌드"가 되는지 확인한다.
+# AWS에 접속하지 않는다 (배포는 deploy.yml).
+name: Frontend CI
+
+on:
+  pull_request:
+    branches: [main, dev]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # .mise.toml 과 같은 버전 (pnpm 10.34.3, Node 22)
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # lock 파일과 package.json이 어긋나면 실패시킨다 (로컬과 같은 버전으로 설치)
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # tsc(타입 검사) + vite 운영 빌드. .env.production 의 VITE_API_BASE_URL(/api/v1)을 쓴다
+      - name: Build
+        run: pnpm build
