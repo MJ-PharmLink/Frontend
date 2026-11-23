@@ -1,0 +1,73 @@
+# main에 push(= dev → main PR 머지)되면 빌드해서 S3에 올리고 CloudFront 캐시를 비운다.
+#
+# AWS 접속은 OIDC : 액세스 키 없이 Infra의 github_oidc.tf가 만든 프론트 배포 역할을 1시간 빌린다.
+#   - 이 역할은 MJ-PharmLink/Frontend 의 main 브랜치에서 돈 워크플로만 받을 수 있다.
+#   - 할 수 있는 일 : 프론트 버킷 업로드·삭제, CloudFront 캐시 무효화
+
+name: Frontend Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # Actions 탭에서 수동 실행 (main 브랜치를 골라야 역할을 받을 수 있다)
+
+permissions:
+  id-token: write # OIDC 신분증(토큰) 발급
+  contents: read
+
+# 배포가 겹치면 앞의 배포가 끝난 뒤에 다음 배포를 한다
+concurrency:
+  group: frontend-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # 1) JS·CSS 등 파일 이름에 해시가 붙는 파일 : 1년 캐시 (내용이 바뀌면 이름이 바뀐다)
+      #    --delete : 이번 빌드에 없는 옛 파일은 지운다 (index.html은 제외)
+      - name: Upload assets
+        run: |
+          aws s3 sync dist/ "s3://${{ vars.S3_BUCKET }}/" \
+            --delete \
+            --exclude "index.html" \
+            --cache-control "public,max-age=31536000,immutable"
+
+      # 2) index.html : 캐시하지 않는다 (새 배포가 바로 보이게). 새 파일들이 다 올라간 뒤에 마지막으로 올린다
+      - name: Upload index.html
+        run: |
+          aws s3 cp dist/index.html "s3://${{ vars.S3_BUCKET }}/index.html" \
+            --cache-control "no-cache" \
+            --content-type "text/html; charset=utf-8"
+
+      # 3) CloudFront에 남아 있는 옛 index.html을 지운다
+      - name: Invalidate CloudFront
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "${{ vars.CF_DISTRIBUTION_ID }}" \
+            --paths "/" "/index.html"
