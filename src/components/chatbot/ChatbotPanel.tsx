@@ -144,7 +144,7 @@ export default function ChatbotPanel({ user, onNavigate }: Props) {
         onClick={() => setOpen((v) => !v)}
         className="fixed bottom-6 right-6 z-40 flex h-14 w-14 items-center justify-center rounded-full text-white shadow-lg transition-transform hover:scale-105 focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-300"
         style={{ background: "#0B3D91" }}
-        aria-label={open ? "AI 챗봇 닫기" : "AI 챗봇 열기"}
+        aria-label={open ? "팜봇 닫기" : "팜봇 열기"}
         aria-expanded={open}
         data-testid="ai-chat-toggle"
       >
@@ -166,7 +166,7 @@ export default function ChatbotPanel({ user, onNavigate }: Props) {
       {open && (
         <section
           role="dialog"
-          aria-label="PharmLink AI 챗봇"
+          aria-label="팜봇"
           className="fixed bottom-24 right-6 z-40 flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-[#F7F9FC] shadow-2xl max-sm:inset-x-3 max-sm:bottom-24 max-sm:right-3"
           style={{ width: "min(460px, calc(100vw - 24px))", height: "min(640px, calc(100vh - 128px))", fontFamily: "'Pretendard', 'Inter', sans-serif" }}
           data-testid="ai-chat-panel"
@@ -174,7 +174,7 @@ export default function ChatbotPanel({ user, onNavigate }: Props) {
           {/* 헤더 */}
           <header className="flex shrink-0 items-center justify-between px-4 py-3 text-white" style={{ background: "#0B3D91" }}>
             <div className="min-w-0">
-              <p className="text-sm font-semibold">AI 도우미 소리</p>
+              <p className="text-sm font-semibold">팜봇</p>
               <p className="text-[11px] text-white/60">재고 · 상품 조회 전용 · {user.name}님</p>
             </div>
             <div className="flex items-center gap-1">
