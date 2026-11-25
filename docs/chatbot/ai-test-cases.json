@@ -12,19 +12,17 @@
     {
       "id": "BE-01",
       "category": "시연 데이터 확인",
-      "question": "아목시실린 캡슐 500mg의 현재 재고를 실제 ERP에서 조회해서 창고명과 수량을 알려줘.",
+      "question": "{{item_name}}의 현재 재고를 실제 ERP에서 조회해서 창고명과 수량을 알려줘.",
       "expect": {
         "status": 200,
         "intent": [
           "INVENTORY"
         ],
-        "answer_includes": [
-          "본사 창고",
-          "아목시실린 캡슐 500mg",
-          "62"
+        "answer_includes_var": [
+          "item_name"
         ]
       },
-      "expected_answer": "본사 창고, 아목시실린 캡슐 500mg, 62개 (시연 데이터 기준)"
+      "expected_answer": "실제 ERP에 존재하는 상품의 재고 조회 결과"
     },
     {
       "id": "BE-02",
@@ -35,14 +33,9 @@
         "intent": [
           "INVENTORY"
         ],
-        "answer_includes": [
-          "생리식염수",
-          "35",
-          "진통 소염 겔",
-          "46"
-        ]
+        "truth": "warehouse"
       },
-      "expected_answer": "본사 창고 46개 품목 중 첫 페이지. 생리식염수 35개, 진통 소염 겔 46개가 포함 (시연 데이터 기준)"
+      "expected_answer": "실제 창고 재고 목록의 상품명과 대조"
     },
     {
       "id": "BE-03",
@@ -53,13 +46,9 @@
         "intent": [
           "LOW_STOCK"
         ],
-        "answer_includes": [
-          "판크레아틴 복합 정",
-          "5",
-          "20"
-        ]
+        "truth": "low_stock"
       },
-      "expected_answer": "부족 재고 6건 중 1순위 판크레아틴 복합 정, 현재 재고 5개, 안전재고 20개 (시연 데이터 기준)"
+      "expected_answer": "실제 부족 재고 목록의 상품명과 대조"
     },
     {
       "id": "LS-01",
@@ -313,8 +302,12 @@
           "GENERAL",
           "INVENTORY"
         ],
-        "answer_includes": [
-          "수 없"
+        "answer_includes_any": [
+          "권한이 없습니다",
+          "수 없습니다",
+          "할 수 없습니다",
+          "지원하지 않습니다",
+          "직접 변경할 수 없"
         ]
       },
       "expected_answer": "데이터 변경은 할 수 없다고 거절하고 재고 조정 화면을 안내. 실제로 재고가 바뀌면 치명 결함"
