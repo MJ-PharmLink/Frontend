@@ -2,7 +2,7 @@
 
 시연과 통합 테스트는 **로컬 Docker** 기준이다.
 
-## 1. 백엔드 (Backend 저장소, `feat/ai-chatbot-backend`)
+## 1. 백엔드 (Backend 저장소, `dev`)
 
 1. 설정 파일 두 개를 만든다. 둘 다 `.gitignore` 대상이며 **절대 커밋하지 않는다.**
     - 저장소 루트 `.env`
@@ -23,7 +23,20 @@
           api-key: "<Google AI Studio에서 발급한 키>"
       ```
 2. `docker compose up -d --build` : MySQL(127.0.0.1:3307)과 백엔드(127.0.0.1:8080)가 뜬다
-3. 시연 데이터를 넣는다 (기본 시드에는 회사·창고 1개·카테고리만 있다)
+3. 시연 데이터를 넣는다. 기본 시드에는 회사·창고 1개·카테고리만 있고, 시연 데이터(`db/demo`)는 운영 프로필에서만 자동으로 들어간다.
+    - 저장소 루트에 `docker-compose.override.yml` 을 만든다 (docker compose가 자동으로 같이 읽는다, **커밋하지 않는다**)
+      ```yaml
+      services:
+        backend:
+          environment:
+            SPRING_FLYWAY_LOCATIONS: classpath:db/migration,classpath:db/demo
+      ```
+    - `docker compose up -d` → 백엔드 로그에 `Migrating schema ... to version "2.1 - demo data"` 가 보이면 적용된 것이다.
+    - 시연 데이터는 업무 데이터와 **관리자 외 계정을 모두 지우고** 다시 채운다. 창고·영업 계정은 적용 뒤 사용자 관리에서 만든다.
+    - 관리자 계정이 있어야 들어간다. 새로 만든 DB라면 이 파일 없이 한 번 띄워 관리자 계정을 만든 뒤 넣는다. 순서를 어겨 `Column 'created_by' cannot be null` 로 실패했다면 실패 기록을 지우고 다시 띄운다 (데이터는 되돌려져 있다).
+      ```bash
+      docker exec pharm-erp-db sh -c 'MYSQL_PWD=$MYSQL_ROOT_PASSWORD mysql -uroot pharm_erp -e "DELETE FROM flyway_schema_history WHERE success = 0"'
+      ```
 4. 확인 : `curl -s localhost:8080/api/v1/auth/login -H 'Content-Type: application/json' -d '{"username":"…","password":"…"}'` → `access_token`
 
 > Gemini 키가 없어도 서버는 뜬다. 그때 챗봇은 503 `AI_SERVICE_UNAVAILABLE` 을 돌려주므로 오류 화면 확인에 쓸 수 있다. 키를 바꾼 뒤에는 `docker compose up -d --build backend` 로 다시 띄운다.
@@ -39,9 +52,9 @@
 
 | 질문 | 기대 |
 |---|---|
-| 테스트 해열진통제 650mg의 현재 재고를 실제 ERP에서 조회해서 창고명과 수량을 알려줘. | INVENTORY · 본사 창고 7개 |
-| 창고 ID가 1인 창고의 재고를 실제 ERP에서 조회해서 상품명과 현재 재고 수량을 알려줘. | INVENTORY · API테스트상품-450848180f 8개, 테스트 해열진통제 650mg 7개 |
-| 현재 재고가 부족한 상품을 실제 ERP에서 조회해서 상품명, 현재 수량, 안전재고를 알려줘. | LOW_STOCK · 현재 7개, 안전재고 20개 |
+| 아목시실린 캡슐 500mg의 현재 재고를 실제 ERP에서 조회해서 창고명과 수량을 알려줘. | INVENTORY · 본사 창고 62개 |
+| 창고 ID가 1인 창고의 재고를 실제 ERP에서 조회해서 상품명과 현재 재고 수량을 알려줘. | INVENTORY · 46개 품목 중 첫 페이지, 생리식염수 35개, 진통 소염 겔 46개 |
+| 현재 재고가 부족한 상품을 실제 ERP에서 조회해서 상품명, 현재 수량, 안전재고를 알려줘. | LOW_STOCK · 6건, 1순위 판크레아틴 복합 정 (현재 5개, 안전재고 20개) |
 
 ## 4. 회귀 테스트
 
