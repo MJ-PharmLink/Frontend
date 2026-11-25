@@ -326,7 +326,7 @@ export default function AdminLayout({ user, currentRoute, onNavigate, onLogout, 
             </div>
 
             {/* AI 챗봇 : 모든 역할에 노출 (서버 권한 : ADMIN, SALES, WAREHOUSE) */}
-            <ChatbotPanel user={user} onNavigate={onNavigate} />
+            <ChatbotPanel user={user} currentRoute={currentRoute} onNavigate={onNavigate} />
         </div>
     )
 }

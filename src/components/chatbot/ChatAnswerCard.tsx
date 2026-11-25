@@ -21,6 +21,8 @@ import MarkdownLite from "./MarkdownLite"
 
 interface Props {
   message: ChatMessage
+  /** 지금 보고 있는 화면 : 답변의 이동 링크가 같은 화면을 가리키면 숨긴다 */
+  currentRoute?: string
   onNavigate?: (route: "inventory" | "dashboard") => void
 }
 
@@ -89,7 +91,7 @@ function SourceTable({ source }: { source: AiSource }) {
 }
 
 /** 답변 카드 : 조회 유형, 본문, 조회 조건, 근거 데이터, 생성 시각 */
-export default function ChatAnswerCard({ message, onNavigate }: Props) {
+export default function ChatAnswerCard({ message, currentRoute, onNavigate }: Props) {
   const [showSources, setShowSources] = useState(false)
   const [copied, setCopied] = useState(false)
   const res = message.response
@@ -168,7 +170,7 @@ export default function ChatAnswerCard({ message, onNavigate }: Props) {
       <div className="flex items-center justify-between gap-2 border-t border-slate-100 px-3 py-1.5">
         <span className="truncate text-[11px] text-slate-400">조회 전용 · 실제 ERP 데이터 기준</span>
         <div className="flex shrink-0 items-center gap-2 whitespace-nowrap">
-          {view.route && onNavigate && (
+          {view.route && onNavigate && view.route !== currentRoute && (
             <button
               type="button"
               onClick={() => onNavigate(view.route!)}

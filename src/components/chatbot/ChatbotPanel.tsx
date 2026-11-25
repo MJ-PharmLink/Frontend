@@ -14,6 +14,8 @@ import ChatAnswerCard from "./ChatAnswerCard"
 
 interface Props {
   user: AuthUser
+  /** 지금 보고 있는 화면 : 답변 카드가 같은 화면으로 가는 링크를 숨기는 데 쓴다 */
+  currentRoute?: string
   onNavigate?: (route: "inventory" | "dashboard") => void
 }
 
@@ -33,7 +35,7 @@ function Spinner() {
  * AI 챗봇 패널 : 공통 레이아웃 오른쪽 아래에 붙는다.
  * 화면을 옮겨 다녀도 AdminLayout 안에 있으므로 대화가 유지되고, 로그아웃하면 사라진다.
  */
-export default function ChatbotPanel({ user, onNavigate }: Props) {
+export default function ChatbotPanel({ user, currentRoute, onNavigate }: Props) {
   const [open, setOpen] = useState(false)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState("")
@@ -292,7 +294,7 @@ export default function ChatbotPanel({ user, onNavigate }: Props) {
               return (
                 <div key={m.id} className="flex">
                   <div className="w-full">
-                    <ChatAnswerCard message={m} onNavigate={onNavigate} />
+                    <ChatAnswerCard message={m} currentRoute={currentRoute} onNavigate={onNavigate} />
                   </div>
                 </div>
               )
