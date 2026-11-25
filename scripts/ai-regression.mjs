@@ -9,7 +9,7 @@
  * 사용법 : AI_TEST_USERNAME=admin AI_TEST_PASSWORD=... pnpm test:ai
  * 옵션 :
  *   --base http://localhost:8080/api/v1   기본값은 환경 변수 VITE_API_BASE_URL, 없으면 이 주소
- *   --only LS,INV                         케이스 id 접두사로 거르기
+ *   --only LS,INV                         케이스 id 접두사로 거르기 (쉼표 또는 공백 구분. PowerShell은 "LS,INV" 처럼 따옴표)
  *   --delay 5000                          질문 사이 대기(ms), 기본 5초. Gemini 무료 한도 보호
  * 역할 케이스 : AI_TEST_WAREHOUSE_* (AUTH-03), AI_TEST_SALES_* (AUTH-04) 계정이 있을 때만 돈다.
  */
@@ -26,8 +26,9 @@ const opt = (name, fallback) => {
 }
 
 const BASE = opt("base", process.env.VITE_API_BASE_URL || "http://localhost:8080/api/v1").replace(/\/$/, "")
+// PowerShell은 따옴표 없는 LS,INV 를 배열로 바꿔 "LS INV" 로 넘기므로 공백도 구분자로 받는다
 const ONLY = opt("only", "")
-  .split(",")
+  .split(/[\s,]+/)
   .map((s) => s.trim())
   .filter(Boolean)
 const DELAY = Number(opt("delay", "5000"))
@@ -35,6 +36,12 @@ const DELAY = Number(opt("delay", "5000"))
 const TIMEOUT_MS = 35_000
 
 const { cases } = JSON.parse(readFileSync(join(ROOT, "docs/chatbot/ai-test-cases.json"), "utf8"))
+const selected = cases.filter((c) => !ONLY.length || ONLY.some((p) => c.id.startsWith(p)))
+// 걸러진 케이스가 0건이면 로그인 전에 멈춘다 : 0건 보고서가 "전부 통과"처럼 보이지 않도록
+if (!selected.length) {
+  console.error(`--only ${ONLY.join(",")} 에 맞는 케이스가 없습니다. id 접두사(예 : LS, EXP, BE-01)를 확인하세요.`)
+  process.exit(2)
+}
 
 /* ───────────── HTTP ───────────── */
 
@@ -182,7 +189,6 @@ async function main() {
   const truth = await loadTruth(token)
   console.log("▶ 실제 데이터 변수:", truth.vars)
 
-  const selected = cases.filter((c) => !ONLY.length || ONLY.some((p) => c.id.startsWith(p)))
   const results = []
 
   for (const tc of selected) {

@@ -67,4 +67,4 @@ pnpm test:ai
 - 질문 사이 기본 5초 대기(`--delay`). 29개 × AI 호출 최대 2번이라 무료 한도를 넘지 않도록 줄이지 않는다.
 - 창고·영업 계정이 없으면 AUTH-03/04는 SKIP.
 - 보고서 : `docs/chatbot/reports/ai-regression-<시각>.md` (Git 제외). FAIL은 원인 확인, WARN은 답변 원문을 직접 확인.
-- 일부만 다시 : `pnpm test:ai --only LS-02,EXP`
+- 일부만 다시 : `pnpm test:ai --only "LS-02,EXP"` (쉼표 또는 공백 구분. PowerShell은 쉼표를 배열로 바꾸므로 따옴표로 감싼다. 맞는 케이스가 없으면 바로 멈춘다)
