@@ -10,6 +10,9 @@ export {
 } from "./client"
 
 export {
+  AI_CHAT_TIMEOUT_MS,
+  AiTimeoutError,
+  aiApi,
   authApi,
   categoriesApi,
   companyApi,

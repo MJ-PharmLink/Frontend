@@ -161,6 +161,11 @@ export type ErrorCode =
   | "SALE_CREATION_FAILED"
   | "PDF_GENERATION_FAILED"
   | "INVENTORY_QUERY_FAILED"
+  | "AI_SERVICE_UNAVAILABLE"
+  /** Gemini 호출 한도 초과 : HTTP 429 */
+  | "AI_RATE_LIMITED"
+  /** Gemini 응답 시간 초과 : HTTP 504 */
+  | "AI_TIMEOUT"
 
 /* ───────────────────── 3. 인증 · 4. 사용자 ───────────────────── */
 
@@ -802,4 +807,76 @@ export type UpdateCompanyRequest = Omit<Company, "company_id" | "updated_at"> & 
   wholesale_license_number?: string
   fax?: string
   email?: string
+}
+
+/* ───────────────────── 15. AI 챗봇 (조회 전용 MVP) ───────────────────── */
+
+/**
+ * 서버가 답변을 만들 때 고른 조회 유형 : GENERAL, LOW_STOCK, INVENTORY, EXPIRY.
+ * 서버에 새 유형이 추가돼도 화면이 깨지지 않도록 다른 문자열도 허용한다.
+ */
+export type AiIntent = "GENERAL" | "LOW_STOCK" | "INVENTORY" | "EXPIRY" | (string & {})
+
+/** 직전 대화 한 건 : 최근 10개까지, content는 2000자까지 보낸다 */
+export interface AiChatHistoryItem {
+  role: "user" | "assistant"
+  content: string
+}
+
+export interface AiChatRequest {
+  /** 질문 : 1~1000자 */
+  message: string
+  /** 직전 대화 : 서버는 질문 의도 판단에만 쓰고, 데이터 조회는 매번 현재 사용자 권한으로 다시 한다 */
+  history?: AiChatHistoryItem[]
+}
+
+/** 답변 근거가 된 조회 결과 한 건 */
+export interface AiSource {
+  /** 실행한 조회 함수 이름 (예 : get_low_stock_items) */
+  type?: string
+  title?: string
+  /** 표로 그릴 행 : 키는 서버 snake_case 그대로 쓴다 */
+  rows?: Record<string, unknown>[]
+  [key: string]: unknown
+}
+
+/** 서버가 실제로 조회한 조건 (창고, 키워드, 페이지, 결과 건수 등) */
+export interface AiQueryContext {
+  function_name?: string
+  keyword?: string | null
+  warehouse_id?: number | null
+  page?: number
+  total_count?: number
+  total_pages?: number
+  has_next?: boolean
+  /** 유통기한(EXPIRY) 조회에서만 온다 : days, expiry_status */
+  days?: number
+  expiry_status?: "EXPIRED" | "EXPIRING_SOON" | null
+  [key: string]: unknown
+}
+
+/**
+ * POST /ai/chat 응답 : answer·intent는 항상 온다.
+ * sources·query_context·generated_at은 서버 버전에 따라 없을 수 있어 선택 필드로 두고, 없으면 answer만 보여 준다.
+ * 일반 질문은 sources = [], query_context = null.
+ */
+export interface AiChatResponse {
+  answer: string
+  intent: AiIntent
+  sources?: AiSource[]
+  query_context?: AiQueryContext | null
+  generated_at?: IsoDateTime
+}
+
+export interface AiCapability {
+  intent: AiIntent
+  label: string
+  description?: string
+  examples?: string[]
+}
+
+/** 추천 질문 묶음 : 화면 고정 목록(DEFAULT_CAPABILITIES)에서 쓴다 */
+export interface AiCapabilities {
+  read_only?: boolean
+  capabilities: AiCapability[]
 }
