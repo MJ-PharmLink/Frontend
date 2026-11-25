@@ -5,6 +5,8 @@
 
 import { request, requestBlob, requestEmpty, requestPage } from "./client"
 import type {
+  AiChatRequest,
+  AiChatResponse,
   ApproveOrderResponse,
   BusinessPartner,
   CancelOrderResponse,
@@ -258,6 +260,55 @@ export const companyApi = {
   get: () => request<Company>("/company"),
   /** 13.2 회사 정보 수정 — 관리자. 전체 교체(PUT) */
   update: (body: UpdateCompanyRequest) => request<Company>("/company", { method: "PUT", body }),
+}
+
+/* ───────────────────── 15. AI 챗봇 ───────────────────── */
+
+/**
+ * 챗봇 요청 제한 시간 : 35초.
+ * 운영 CloudFront는 응답을 30초까지만 기다리고, 서버는 Gemini를 최대 두 번(함수 선택, 답변 생성) 부르며
+ * 호출당 12초에서 끊어 504 AI_TIMEOUT 을 준다. 화면 제한을 조금 더 길게 두어 서버나 CloudFront의 504가 먼저 도착하게 한다.
+ */
+export const AI_CHAT_TIMEOUT_MS = 35_000
+
+/** 화면 제한 시간(AI_CHAT_TIMEOUT_MS) 안에 응답이 오지 않았을 때 */
+export class AiTimeoutError extends Error {
+  constructor() {
+    super("응답 시간이 초과되었습니다.")
+    this.name = "AiTimeoutError"
+  }
+}
+
+export const aiApi = {
+  /**
+   * 15.1 챗봇 질문 : 호출부가 넘긴 signal(취소 버튼)과 제한 시간을 함께 건다.
+   * 제한 시간으로 끊기면 AiTimeoutError, 사용자가 취소하면 AbortError가 난다.
+   */
+  chat: async (body: AiChatRequest, signal?: AbortSignal): Promise<AiChatResponse> => {
+    const controller = new AbortController()
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, AI_CHAT_TIMEOUT_MS)
+    const forwardAbort = () => controller.abort()
+    // 이미 취소된 signal 은 abort 이벤트가 다시 오지 않으므로 바로 끊는다
+    if (signal?.aborted) controller.abort()
+    else signal?.addEventListener("abort", forwardAbort)
+    try {
+      return await request<AiChatResponse>("/ai/chat", {
+        method: "POST",
+        body,
+        signal: controller.signal,
+      })
+    } catch (err) {
+      if (timedOut) throw new AiTimeoutError()
+      throw err
+    } finally {
+      clearTimeout(timer)
+      signal?.removeEventListener("abort", forwardAbort)
+    }
+  },
 }
 
 export type { Page }

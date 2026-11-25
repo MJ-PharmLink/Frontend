@@ -28,3 +28,6 @@ logs/
 # beside it.
 /.plugins/
 /.opencode-skills/
+
+# AI 챗봇 회귀 테스트 보고서 : 실행할 때마다 생기고 실제 ERP 데이터가 들어 있어 공유하지 않는다
+docs/chatbot/reports/
