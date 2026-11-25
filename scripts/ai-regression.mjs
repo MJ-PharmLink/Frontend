@@ -135,10 +135,18 @@ function judge(tc, r, truth) {
     }
     if (!answer.trim()) fails.push("answer 비어 있음")
     for (const k of e.answer_includes ?? []) if (!answer.includes(k)) fails.push(`답변에 “${k}” 없음`)
+    if (e.answer_includes_any?.length &&
+        !e.answer_includes_any.some((k) => answer.includes(k))) {
+      fails.push("허용된 거절 표현이 답변에 없음")
+    }
+    if (e.answer_includes_any?.length &&
+        !e.answer_includes_any.some((k) => answer.includes(k))) {
+      fails.push("허용된 거절 표현이 답변에 없음")
+    }
     for (const k of e.answer_excludes ?? []) if (answer.includes(k)) fails.push(`답변에 금지어 “${k}” 포함`)
     for (const v of e.answer_includes_var ?? []) {
       const val = truth.vars[v]
-      if (val && !answer.includes(val)) warns.push(`답변에 실제 값 “${val}”(${v}) 없음`)
+      if (val && !answer.includes(val)) (tc.id.startsWith("BE-") ? fails : warns).push(`답변에 실제 값 “${val}”(${v}) 없음`)
     }
     if (e.empty && !EMPTY_HINTS.some((h) => answer.includes(h))) warns.push("결과 없음 안내 문구를 찾지 못함 (환각 여부 직접 확인)")
 
@@ -150,7 +158,7 @@ function judge(tc, r, truth) {
         return
       }
       const missing = expectNames(rows).filter((n) => !answer.includes(n))
-      if (missing.length) warns.push(`${label}: 실제 상위 항목 누락 ${missing.join(", ")}`)
+      if (missing.length) (tc.id.startsWith("BE-") ? fails : warns).push(`${label}: 실제 상위 항목 누락 ${missing.join(", ")}`)
     }
     if (e.truth === "low_stock") checkNames(truth.lowStock, "부족 재고 대조")
     if (e.truth === "low_stock_wh") checkNames(truth.lowStockWh ?? [], "창고별 부족 재고 대조")
